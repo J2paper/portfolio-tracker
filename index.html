@@ -581,7 +581,7 @@
      ============================================================ */
   .lot-header {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr 32px;
+    grid-template-columns: 64px 1fr 1fr 1fr 32px;
     gap: 6px;
     padding: 0 4px 4px;
     font-family: var(--sans);
@@ -590,8 +590,28 @@
     color: var(--muted);
   }
   .lot-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
-  .lot-row { display: grid; grid-template-columns: 1fr 1fr 1fr 32px; gap: 6px; align-items: center; }
+  .lot-row { display: grid; grid-template-columns: 64px 1fr 1fr 1fr 32px; gap: 6px; align-items: center; }
   .lot-row .input { padding: 3px 6px; font-size: 19px; }
+  .lot-type-btn {
+    background: var(--surface);
+    border: 2px solid;
+    border-color: var(--bevel-light) var(--bevel-darker) var(--bevel-darker) var(--bevel-light);
+    box-shadow: inset 1px 1px 0 var(--bevel-light-2), inset -1px -1px 0 var(--bevel-dark);
+    border-radius: 0;
+    padding: 6px 4px;
+    font-family: var(--sans);
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    color: #ffffff;
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.45);
+  }
+  .lot-type-buy { background: var(--gain); }
+  .lot-type-sell { background: var(--loss); }
+  .lot-type-btn:active {
+    border-color: var(--bevel-darker) var(--bevel-light) var(--bevel-light) var(--bevel-darker);
+    box-shadow: inset 1px 1px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light-2);
+  }
   .lot-add-btn {
     display: flex;
     align-items: center;
@@ -606,6 +626,7 @@
     font-weight: bold;
     cursor: pointer;
   }
+  .lot-add-btn.lot-add-sell { color: var(--loss); }
   .lot-summary {
     font-family: var(--mono);
     font-size: 19px;
@@ -849,15 +870,51 @@
   }
 
   // ---------- lot math ----------
-  // Aggregates a list of buy lots into total shares, total cost, and average cost.
+  // Replay buys + sells in chronological order using the average-cost method:
+  // - buy:  cost += shares × price; shares += shares; avgCost recomputed.
+  // - sell: realized += (sellPrice − avgCost) × soldShares;
+  //         cost -= avgCost × soldShares; shares -= soldShares; avgCost preserved.
+  // Returns { shares, cost, avgCost, realized, history } where history[i] is a
+  // post-transaction snapshot used by the detail chart for stepped overlays.
   function lotsTotals(lots) {
-    let shares = 0, cost = 0;
-    for (const l of (lots || [])) {
-      const s = Number(l.shares) || 0;
-      const p = Number(l.price) || 0;
-      if (s > 0 && p > 0) { shares += s; cost += s * p; }
+    const sorted = [...(lots || [])]
+      .filter(l => Number(l.shares) > 0 && Number(l.price) > 0)
+      .map(l => ({
+        id: l.id,
+        type: l.type === 'sell' ? 'sell' : 'buy',
+        shares: Number(l.shares),
+        price: Number(l.price),
+        date: l.date,
+        _t: new Date(l.date || 0).getTime(),
+      }))
+      .sort((a, b) => {
+        if (a._t !== b._t) return a._t - b._t;
+        return (a.type === 'sell' ? 1 : 0) - (b.type === 'sell' ? 1 : 0);
+      });
+    let shares = 0, cost = 0, realized = 0;
+    const history = [];
+    for (const l of sorted) {
+      if (l.type === 'sell') {
+        const avgBefore = shares > 0 ? cost / shares : 0;
+        const sellShares = Math.min(l.shares, shares);
+        realized += (l.price - avgBefore) * sellShares;
+        cost -= avgBefore * sellShares;
+        shares -= sellShares;
+      } else {
+        cost += l.shares * l.price;
+        shares += l.shares;
+      }
+      history.push({
+        x: l._t,
+        avgCost: shares > 0 ? cost / shares : 0,
+        shares,
+        type: l.type,
+        txPrice: l.price,
+        txShares: l.shares,
+        id: l.id,
+      });
     }
-    return { shares, cost, avgCost: shares > 0 ? cost / shares : 0 };
+    return { shares, cost, avgCost: shares > 0 ? cost / shares : 0, realized, history };
   }
 
   // Convert any version of a holding payload (v1, v2 single-buy, v3 with lots) into the
@@ -875,6 +932,7 @@
         .filter(l => Number(l.shares) > 0 && Number(l.price) > 0)
         .map(l => ({
           id: l.id || makeLotId(),
+          type: l.type === 'sell' ? 'sell' : 'buy',
           shares: Number(l.shares),
           price: Number(l.price),
           date: l.date || new Date().toISOString().slice(0, 10),
@@ -882,6 +940,7 @@
     } else if (Number(h.shares) > 0 && Number(h.buyPrice) > 0) {
       lots = [{
         id: makeLotId(),
+        type: 'buy',
         shares: Number(h.shares),
         price: Number(h.buyPrice),
         date: h.buyDate || new Date().toISOString().slice(0, 10),
@@ -1447,19 +1506,46 @@
         <text x="${(w - pR - 4).toFixed(1)}" y="${(ry - 4).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="14" font-weight="bold" fill="${refColor}">${escape(opts.refLabel || ('avg ' + fy(opts.refLine)))}</text>`;
     }
 
+    // Stepped line: held flat between transition points, jumping at each one.
+    let steppedEl = '';
+    if (opts.steppedLine && opts.steppedLine.points && opts.steppedLine.points.length > 0) {
+      const pts = opts.steppedLine.points;
+      const segs = [];
+      for (let i = 0; i < pts.length; i++) {
+        const p = pts[i];
+        if (i === 0) {
+          segs.push('M' + sx(p.x).toFixed(1) + ',' + sy(p.y).toFixed(1));
+        } else {
+          segs.push('L' + sx(p.x).toFixed(1) + ',' + sy(pts[i - 1].y).toFixed(1));
+          segs.push('L' + sx(p.x).toFixed(1) + ',' + sy(p.y).toFixed(1));
+        }
+      }
+      if (opts.steppedLine.extendToEnd !== false && pts.length > 0) {
+        segs.push('L' + sx(xMax).toFixed(1) + ',' + sy(pts[pts.length - 1].y).toFixed(1));
+      }
+      const sc = opts.steppedLine.color || '#e8b14d';
+      const lastY = pts[pts.length - 1].y;
+      steppedEl = `<path d="${segs.join(' ')}" fill="none" stroke="${sc}" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <text x="${(w - pR - 4).toFixed(1)}" y="${(sy(lastY) - 4).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="14" font-weight="bold" fill="${sc}">${escape(opts.steppedLine.label || ('avg ' + fy(lastY)))}</text>`;
+    }
+
     const markEls = (opts.markers || []).map(m => {
       const x = sx(m.x);
       if (x < pL || x > w - pR) return '';
       const y = sy(m.y);
       const c = m.color || '#5a8794';
-      return `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${pT}" y2="${(h - pB).toFixed(1)}" stroke="${c}" stroke-opacity="0.45" stroke-dasharray="2 4"/>
-        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="${c}" stroke="var(--surface)" stroke-width="1.5"/>`;
+      const isSell = m.type === 'sell';
+      const shape = isSell
+        ? `<polygon points="${(x - 5.5).toFixed(1)},${(y - 5.5).toFixed(1)} ${(x + 5.5).toFixed(1)},${(y - 5.5).toFixed(1)} ${x.toFixed(1)},${(y + 5).toFixed(1)}" fill="${c}" stroke="var(--surface)" stroke-width="1.5"/>`
+        : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="${c}" stroke="var(--surface)" stroke-width="1.5"/>`;
+      return `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${pT}" y2="${(h - pB).toFixed(1)}" stroke="${c}" stroke-opacity="0.45" stroke-dasharray="2 4"/>${shape}`;
     }).join('');
 
     const lineColor = opts.color || '#5a8794';
     return `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg" style="width: 100%; height: auto; max-height: 360px; color: var(--text);">
       ${yEls.join('')}
       ${refEl}
+      ${steppedEl}
       ${markEls}
       <path d="${d}" fill="none" stroke="${lineColor}" stroke-width="2"/>
       ${xEls.join('')}
@@ -2102,30 +2188,72 @@
       body = '<div class="chart-empty" style="padding: 40px 0;">No data for this range.</div>';
     } else {
       const earliest = cached.points[0].x;
-      // Buy markers (only lots within visible range)
+      const totals = lotsTotals(h.lots);
+      const txHistory = totals.history; // chronological avgCost timeline
+      const buyCount = (h.lots || []).filter(l => (l.type || 'buy') === 'buy').length;
+      const sellCount = (h.lots || []).filter(l => l.type === 'sell').length;
+
+      // Transaction markers — circles for buys, downward triangles for sells.
       const markers = (h.lots || [])
-        .map(l => ({ x: new Date(l.date).getTime(), y: l.price }))
+        .map(l => ({
+          x: new Date(l.date).getTime(),
+          y: Number(l.price),
+          type: l.type === 'sell' ? 'sell' : 'buy',
+          color: l.type === 'sell' ? 'var(--loss)' : 'var(--gain)',
+        }))
         .filter(m => m.x >= earliest && !isNaN(m.x));
+
+      // Stepped avg-cost line: clip points before chart's earliest, but seed
+      // the visible left edge with the avg cost as of that earliest date.
+      const stepPoints = txHistory.map(p => ({ x: p.x, y: p.avgCost }));
+      // Find avg cost at the earliest visible timestamp (last txn at or before)
+      let initialAvg = null;
+      for (const p of txHistory) {
+        if (p.x <= earliest) initialAvg = p.avgCost;
+        else break;
+      }
+      const visibleSteps = stepPoints.filter(p => p.x >= earliest);
+      if (initialAvg != null && (visibleSteps.length === 0 || visibleSteps[0].x > earliest)) {
+        visibleSteps.unshift({ x: earliest, y: initialAvg });
+      }
+
       // Stats
       const first = cached.points[0];
       const last = cached.points[cached.points.length - 1];
       const change = last.y - first.y;
       const changePct = first.y > 0 ? (change / first.y) * 100 : 0;
       const changeColor = change >= 0 ? 'var(--gain)' : 'var(--loss)';
+      const realizedColor = totals.realized >= 0 ? 'var(--gain)' : 'var(--loss)';
 
       const priceChart = lineChartSVG(cached.points, {
         width: 1100, height: 280,
-        refLine: item.avgCost,
+        steppedLine: visibleSteps.length > 0
+          ? { points: visibleSteps, color: 'var(--accent)', label: 'avg cost ' + fmtMoneyCcy(item.avgCost), extendToEnd: true }
+          : null,
+        // Fall back to a flat ref line if no transactions recorded somehow.
+        refLine: visibleSteps.length === 0 ? item.avgCost : null,
         refLabel: 'avg cost ' + fmtMoneyCcy(item.avgCost),
         markers,
         color: 'var(--info)',
         formatY: fmtMoneyCcy,
       });
 
-      // Profit-rate chart: (price - avgCost) / avgCost × 100
-      const ratePoints = item.avgCost > 0
-        ? cached.points.map(p => ({ x: p.x, y: ((p.y - item.avgCost) / item.avgCost) * 100 }))
-        : [];
+      // Profit-rate chart with TIME-VARYING avg cost: at each date use the
+      // avg cost in effect at that date (last transition at or before).
+      const findAvgAt = (ts) => {
+        let lo = 0, hi = txHistory.length - 1, idx = -1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (txHistory[mid].x <= ts) { idx = mid; lo = mid + 1; } else hi = mid - 1;
+        }
+        return idx >= 0 ? txHistory[idx].avgCost : null;
+      };
+      const ratePoints = cached.points
+        .map(p => {
+          const avg = findAvgAt(p.x);
+          return avg != null && avg > 0 ? { x: p.x, y: ((p.y - avg) / avg) * 100 } : null;
+        })
+        .filter(Boolean);
       const rateChart = ratePoints.length > 0
         ? lineChartSVG(ratePoints, {
             width: 1100, height: 200,
@@ -2137,18 +2265,20 @@
           })
         : '';
 
+      const txSummary = `${buyCount} buy${buyCount === 1 ? '' : 's'}${sellCount > 0 ? ' · ' + sellCount + ' sell' + (sellCount === 1 ? '' : 's') : ''}`;
       const stats = `<div class="detail-stats">
         <div class="detail-stat"><span class="detail-stat-label">Range start</span><span class="detail-stat-value">${escape(fmtMoneyCcy(first.y))}</span></div>
         <div class="detail-stat"><span class="detail-stat-label">Range end</span><span class="detail-stat-value">${escape(fmtMoneyCcy(last.y))}</span></div>
         <div class="detail-stat"><span class="detail-stat-label">Range change</span><span class="detail-stat-value" style="color: ${changeColor};">${change >= 0 ? '+' : '−'}${fmtMoneyCcy(Math.abs(change))} · ${fmtPct(changePct)}</span></div>
-        <div class="detail-stat"><span class="detail-stat-label">Avg cost</span><span class="detail-stat-value">${escape(fmtMoneyCcy(item.avgCost))} <span class="text-dim" style="font-size: 14px;">(${item.shares.toLocaleString()} sh, ${(h.lots || []).length} buy${(h.lots || []).length === 1 ? '' : 's'})</span></span></div>
-        <div class="detail-stat"><span class="detail-stat-label">Current return</span><span class="detail-stat-value" style="color: ${item.hasPrice && item.pnl >= 0 ? 'var(--gain)' : 'var(--loss)'};">${item.hasPrice ? fmtPct(item.pct) : '—'}</span></div>
+        <div class="detail-stat"><span class="detail-stat-label">Avg cost</span><span class="detail-stat-value">${escape(fmtMoneyCcy(item.avgCost))} <span class="text-dim" style="font-size: 14px;">(${item.shares.toLocaleString()} sh · ${escape(txSummary)})</span></span></div>
+        <div class="detail-stat"><span class="detail-stat-label">Unrealized</span><span class="detail-stat-value" style="color: ${item.hasPrice && item.pnl >= 0 ? 'var(--gain)' : 'var(--loss)'};">${item.hasPrice ? (item.pnl >= 0 ? '+' : '−') + fmtMoneyCcy(Math.abs(item.pnl)) + ' · ' + fmtPct(item.pct) : '—'}</span></div>
+        ${totals.realized !== 0 ? `<div class="detail-stat"><span class="detail-stat-label">Realized</span><span class="detail-stat-value" style="color: ${realizedColor};">${totals.realized >= 0 ? '+' : '−'}${fmtMoneyCcy(Math.abs(totals.realized))}</span></div>` : ''}
       </div>`;
 
       body = `${stats}
-        <div class="detail-chart-label">Price · avg cost reference · buy markers</div>
+        <div class="detail-chart-label">Price · avg cost (stepped) · transaction markers (● buy / ▼ sell)</div>
         <div class="detail-chart-wrap">${priceChart}</div>
-        ${rateChart ? `<div class="detail-chart-label">Profit rate vs avg cost</div><div class="detail-chart-wrap">${rateChart}</div>` : ''}`;
+        ${rateChart ? `<div class="detail-chart-label">Profit rate vs avg cost (avg cost varies over time)</div><div class="detail-chart-wrap">${rateChart}</div>` : ''}`;
     }
 
     return `<section class="holdings-section detail-panel">
@@ -2210,7 +2340,11 @@
       const primary = displayName(h);
       const showSub = h.name && h.name.trim() && h.name.trim() !== h.ticker;
 
-      const lotBadge = it.lotCount > 1 ? `<span class="lot-count-badge" title="${it.lotCount} buy lots">${it.lotCount} buys</span>` : '';
+      const buyN = (h.lots || []).filter(l => (l.type || 'buy') === 'buy').length;
+      const sellN = (h.lots || []).filter(l => l.type === 'sell').length;
+      const lotBadge = sellN > 0
+        ? `<span class="lot-count-badge" title="${buyN} buy(s), ${sellN} sell(s)">${buyN}B/${sellN}S</span>`
+        : (buyN > 1 ? `<span class="lot-count-badge" title="${buyN} buy lots">${buyN} buys</span>` : '');
       const isSelected = state.selectedHoldingId === h.id;
       return `<tr class="${isSelected ? 'row-selected' : ''}">
         <td>
@@ -2360,9 +2494,10 @@
   }
 
   function tplLotRow(l, market, canRemove) {
-    const cur = market === 'KR' ? 'KRW' : 'USD';
     const today = new Date().toISOString().slice(0, 10);
+    const type = l.type === 'sell' ? 'sell' : 'buy';
     return `<div class="lot-row" data-lot-row="${l.id}">
+      <button class="lot-type-btn lot-type-${type}" data-act="toggle-lot-type" data-lot-id="${l.id}" title="Click to switch BUY/SELL">${type === 'sell' ? 'SELL' : 'BUY'}</button>
       <input class="input" data-lot-field="shares" type="number" step="any" placeholder="100" value="${l.shares ?? ''}">
       <input class="input" data-lot-field="price" type="number" step="any" placeholder="${market === 'KR' ? '70000' : '150.00'}" value="${l.price ?? ''}">
       <input class="input" data-lot-field="date" type="date" value="${l.date || today}">
@@ -2411,8 +2546,9 @@
           <datalist id="cat-list">${allCats.map(c => `<option value="${escape(c)}">`).join('')}</datalist>
         </div>
         <div class="field">
-          <label class="lbl">Buy History · ${cur}</label>
+          <label class="lbl">Transactions · ${cur}</label>
           <div class="lot-header">
+            <span>Type</span>
             <span>Shares</span>
             <span>Price</span>
             <span>Date</span>
@@ -2421,12 +2557,16 @@
           <div class="lot-list">
             ${lots.map(l => tplLotRow(l, market, canRemove)).join('')}
           </div>
-          <button class="lot-add-btn" data-act="add-lot">${I.plus} Add Buy</button>
+          <div style="display: flex; gap: 6px;">
+            <button class="lot-add-btn" data-act="add-lot">${I.plus} Add Buy</button>
+            <button class="lot-add-btn lot-add-sell" data-act="add-lot-sell">${I.plus} Add Sell</button>
+          </div>
         </div>
         <div class="lot-summary" id="lot-summary">
-          <div class="lot-summary-item"><span class="lot-summary-label">Total shares</span><span>${t.shares.toLocaleString()}</span></div>
+          <div class="lot-summary-item"><span class="lot-summary-label">Shares</span><span>${t.shares.toLocaleString()}</span></div>
           <div class="lot-summary-item"><span class="lot-summary-label">Avg cost</span><span>${fmtMoney(t.avgCost, cur)}</span></div>
-          <div class="lot-summary-item"><span class="lot-summary-label">Total cost</span><span>${fmtMoney(t.cost, cur)}</span></div>
+          <div class="lot-summary-item"><span class="lot-summary-label">Cost basis</span><span>${fmtMoney(t.cost, cur)}</span></div>
+          ${t.realized !== 0 ? `<div class="lot-summary-item"><span class="lot-summary-label">Realized</span><span style="color: ${t.realized >= 0 ? 'var(--gain)' : 'var(--loss)'};">${t.realized >= 0 ? '+' : '−'}${fmtMoney(Math.abs(t.realized), cur)}</span></div>` : ''}
         </div>
         <div style="display: flex; gap: 10px;">
           <button class="btn-ghost" data-act="close-dialog" style="flex: 1;">Cancel</button>
@@ -2552,7 +2692,9 @@
     if (!state.dialog || !state.dialog.lots) return;
     const live = readLotsFromDOM();
     if (live.length === 0) return;
-    state.dialog.lots = live;
+    // Type isn't in any DOM input — preserve it from existing state by lot id.
+    const typeMap = new Map(state.dialog.lots.map(l => [l.id, l.type === 'sell' ? 'sell' : 'buy']));
+    state.dialog.lots = live.map(l => ({ ...l, type: typeMap.get(l.id) || 'buy' }));
   }
 
   function readForm() {
@@ -2565,17 +2707,23 @@
     };
   }
 
-  // Recompute the lot summary footer from current DOM values, without a full re-render.
+  // Recompute the lot summary footer from the current state.dialog.lots.
+  // Called after every input/toggle event; state is kept in sync via
+  // syncDialogLotsFromDOM, so we don't re-read from DOM here directly.
   function updateLotSummary() {
     const summary = document.getElementById('lot-summary');
     if (!summary || !state.dialog) return;
     const market = state.dialog.market || state.dialog.holding?.market || 'KR';
     const cur = market === 'KR' ? 'KRW' : 'USD';
-    const t = lotsTotals(readLotsFromDOM().map(l => ({ shares: parseFloat(l.shares) || 0, price: parseFloat(l.price) || 0 })));
-    summary.innerHTML =
-      `<div class="lot-summary-item"><span class="lot-summary-label">Total shares</span><span>${t.shares.toLocaleString()}</span></div>` +
-      `<div class="lot-summary-item"><span class="lot-summary-label">Avg cost</span><span>${fmtMoney(t.avgCost, cur)}</span></div>` +
-      `<div class="lot-summary-item"><span class="lot-summary-label">Total cost</span><span>${fmtMoney(t.cost, cur)}</span></div>`;
+    const t = lotsTotals(state.dialog.lots || []);
+    let html = ''
+      + `<div class="lot-summary-item"><span class="lot-summary-label">Shares</span><span>${t.shares.toLocaleString()}</span></div>`
+      + `<div class="lot-summary-item"><span class="lot-summary-label">Avg cost</span><span>${fmtMoney(t.avgCost, cur)}</span></div>`
+      + `<div class="lot-summary-item"><span class="lot-summary-label">Cost basis</span><span>${fmtMoney(t.cost, cur)}</span></div>`;
+    if (t.realized !== 0) {
+      html += `<div class="lot-summary-item"><span class="lot-summary-label">Realized</span><span style="color: ${t.realized >= 0 ? 'var(--gain)' : 'var(--loss)'};">${t.realized >= 0 ? '+' : '−'}${fmtMoney(Math.abs(t.realized), cur)}</span></div>`;
+    }
+    summary.innerHTML = html;
   }
 
   function commitProfileNames() {
@@ -2620,7 +2768,24 @@
     else if (act === 'add-lot') {
       if (state.dialog) {
         syncDialogLotsFromDOM();
-        state.dialog.lots = [...(state.dialog.lots || []), { id: makeLotId(), shares: '', price: '', date: new Date().toISOString().slice(0, 10) }];
+        state.dialog.lots = [...(state.dialog.lots || []), { id: makeLotId(), type: 'buy', shares: '', price: '', date: new Date().toISOString().slice(0, 10) }];
+        render();
+      }
+    }
+    else if (act === 'add-lot-sell') {
+      if (state.dialog) {
+        syncDialogLotsFromDOM();
+        state.dialog.lots = [...(state.dialog.lots || []), { id: makeLotId(), type: 'sell', shares: '', price: '', date: new Date().toISOString().slice(0, 10) }];
+        render();
+      }
+    }
+    else if (act === 'toggle-lot-type') {
+      if (state.dialog) {
+        syncDialogLotsFromDOM();
+        const lotId = btn.dataset.lotId;
+        state.dialog.lots = (state.dialog.lots || []).map(l =>
+          l.id === lotId ? { ...l, type: l.type === 'sell' ? 'buy' : 'sell' } : l
+        );
         render();
       }
     }
@@ -2781,17 +2946,37 @@
     const market = state.dialog.market || state.dialog.holding?.market || 'KR';
     const ticker = (v.ticker || '').trim().toUpperCase();
     if (!ticker) { state.error = 'Ticker is required.'; render(); return; }
+    const typeMap = new Map((state.dialog.lots || []).map(l => [l.id, l.type === 'sell' ? 'sell' : 'buy']));
     const validLots = v.lots
       .map(l => ({
         id: l.id || makeLotId(),
+        type: typeMap.get(l.id) || 'buy',
         shares: Number(l.shares),
         price: Number(l.price),
         date: l.date || new Date().toISOString().slice(0, 10),
       }))
       .filter(l => l.shares > 0 && l.price > 0);
     if (validLots.length === 0) {
-      state.error = 'Add at least one buy with shares and price greater than zero.';
+      state.error = 'Add at least one transaction with shares and price greater than zero.';
       render(); return;
+    }
+    // Validate: no transaction should leave running shares negative.
+    const sortedCheck = [...validLots].sort((a, b) => {
+      const da = new Date(a.date).getTime(), db = new Date(b.date).getTime();
+      if (da !== db) return da - db;
+      return (a.type === 'sell' ? 1 : 0) - (b.type === 'sell' ? 1 : 0);
+    });
+    let running = 0;
+    for (const l of sortedCheck) {
+      if (l.type === 'sell') {
+        if (l.shares > running + 1e-6) {
+          state.error = `Cannot sell ${l.shares} shares on ${l.date} — only ${running.toFixed(4).replace(/\.?0+$/, '')} shares held at that date.`;
+          render(); return;
+        }
+        running -= l.shares;
+      } else {
+        running += l.shares;
+      }
     }
 
     // When adding a new holding for a ticker that already exists in the same market,
