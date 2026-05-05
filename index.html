@@ -717,6 +717,7 @@
     holdings: [],
     fxRate: null,
     lastUpdated: null,
+    displayCurrency: null, // null = auto (derive from holdings); 'KRW' | 'USD' = forced
     // UI state
     updating: false,
     saveStatus: 'idle',
@@ -797,7 +798,7 @@
 
   // ---------- profile helpers ----------
   function newProfile(name) {
-    return { id: makeProfileId(), name: name || 'Default', holdings: [], fxRate: null, lastUpdated: null };
+    return { id: makeProfileId(), name: name || 'Default', holdings: [], fxRate: null, lastUpdated: null, displayCurrency: null };
   }
   function getActive() {
     return state.profiles.find(p => p.id === state.activeProfileId) || state.profiles[0];
@@ -809,6 +810,7 @@
     state.holdings = p.holdings;
     state.fxRate = p.fxRate;
     state.lastUpdated = p.lastUpdated;
+    state.displayCurrency = (p.displayCurrency === 'KRW' || p.displayCurrency === 'USD') ? p.displayCurrency : null;
   }
   function syncToActive() {
     const p = getActive();
@@ -816,6 +818,7 @@
     p.holdings = state.holdings;
     p.fxRate = state.fxRate;
     p.lastUpdated = state.lastUpdated;
+    p.displayCurrency = state.displayCurrency;
   }
 
   // ---------- persistence (localStorage) ----------
@@ -840,6 +843,7 @@
             holdings: (Array.isArray(p.holdings) ? p.holdings : []).map(migrateHolding).filter(Boolean),
             fxRate: typeof p.fxRate === 'number' ? p.fxRate : null,
             lastUpdated: p.lastUpdated || null,
+            displayCurrency: (p.displayCurrency === 'KRW' || p.displayCurrency === 'USD') ? p.displayCurrency : null,
           }));
           state.activeProfileId = (d.activeProfileId && state.profiles.some(p => p.id === d.activeProfileId))
             ? d.activeProfileId : state.profiles[0].id;
@@ -989,6 +993,7 @@
             holdings: (Array.isArray(p.holdings) ? p.holdings : []).map(migrateHolding).filter(Boolean),
             fxRate: typeof p.fxRate === 'number' ? p.fxRate : null,
             lastUpdated: p.lastUpdated || null,
+            displayCurrency: (p.displayCurrency === 'KRW' || p.displayCurrency === 'USD') ? p.displayCurrency : null,
           })).filter(p => p.id);
           if (profiles.length === 0) throw new Error('No valid profiles in file');
           const totalH = profiles.reduce((s, p) => s + p.holdings.length, 0);
@@ -1203,8 +1208,12 @@
     const hasKR = holdings.some(h => h.market === 'KR');
     const hasUS = holdings.some(h => h.market === 'US');
     const allUS = holdings.length > 0 && !hasKR;
-    const baseCcy = allUS ? 'USD' : 'KRW';
-    const needsFx = hasKR && hasUS;
+    const autoCcy = allUS ? 'USD' : 'KRW';
+    // Honor user override; fall back to auto.
+    const baseCcy = (state.displayCurrency === 'KRW' || state.displayCurrency === 'USD')
+      ? state.displayCurrency : autoCcy;
+    // FX needed whenever any holding's native currency differs from the chosen base.
+    const needsFx = (baseCcy === 'KRW' && hasUS) || (baseCcy === 'USD' && hasKR);
     const fxOk = !needsFx || (fx && fx > 0);
 
     const toBase = (v, market) => {
@@ -1331,7 +1340,7 @@
       </header>`;
   }
 
-  function tplToolbar() {
+  function tplToolbar(D) {
     let status = '';
     if (state.saveStatus === 'saving') status = '<span class="text-muted">Saving…</span>';
     else if (state.saveStatus === 'saved') status = '<span class="text-gain">✓ Saved</span>';
@@ -1344,6 +1353,14 @@
       ? `<button class="btn-soft" data-act="toggle-theme" title="Switch to light mode">${I.sun}</button>`
       : `<button class="btn-soft" data-act="toggle-theme" title="Switch to dark mode">${I.moon}</button>`;
 
+    const ccyPref = state.displayCurrency;
+    const effective = D ? D.baseCcy : 'KRW';
+    const ccyLabel = ccyPref === 'KRW' ? '₩ KRW'
+                   : ccyPref === 'USD' ? '$ USD'
+                   : `AUTO (${effective === 'KRW' ? '₩' : '$'})`;
+    const nextLabel = ccyPref === null ? 'KRW' : ccyPref === 'KRW' ? 'USD' : 'AUTO';
+    const ccyBtn = `<button class="btn-soft" data-act="cycle-currency" title="Display currency — click to switch to ${nextLabel}">${ccyLabel}</button>`;
+
     return `<div class="toolbar">
       <button class="btn-primary" data-act="open-add">${I.plus} Add Holding</button>
       <button class="btn-ghost" data-act="open-prices" ${empty ? 'disabled' : ''}>${I.pencil} Edit Prices</button>
@@ -1354,6 +1371,7 @@
       <button class="btn-soft" data-act="export-json" title="Download all profiles as JSON">${I.download} Backup</button>
       <button class="btn-soft" data-act="import-json" title="Restore from a JSON file">${I.upload} Restore</button>
       <span class="toolbar-divider"></span>
+      ${ccyBtn}
       ${themeBtn}
       <div class="save-status">${status}</div>
     </div>`;
@@ -1878,7 +1896,7 @@
     const D = derive();
     root.innerHTML =
       tplHeader() +
-      tplToolbar() +
+      tplToolbar(D) +
       tplError() +
       tplKPI(D) +
       tplCharts(D) +
@@ -1986,6 +2004,11 @@
     else if (act === 'export-json') { exportJSON(); }
     else if (act === 'import-json') { document.getElementById('import-file').click(); }
     else if (act === 'toggle-theme') { toggleTheme(); }
+    else if (act === 'cycle-currency') {
+      const c = state.displayCurrency;
+      state.displayCurrency = c === null ? 'KRW' : c === 'KRW' ? 'USD' : null;
+      save();
+    }
     else if (act === 'manage-profiles') { state.dialog = { mode: 'profiles' }; render(); }
     else if (act === 'quick-add-profile') {
       const name = prompt('New user name:');
