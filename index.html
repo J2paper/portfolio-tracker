@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>포트폴리오 · Portfolio Tracker</title>
+<title>포트폴리오 대시보드 · Portfolio Dashboard</title>
 <meta name="color-scheme" content="dark">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,18 +12,23 @@
 <style>
   :root {
     --bg: #0a0a0a;
-    --surface: #171717;
-    --surface-hi: #232323;
-    --border: rgba(255, 255, 255, 0.10);
-    --border-hi: rgba(255, 255, 255, 0.20);
+    --surface: #161616;
+    --surface-hi: #1f1f1f;
+    --surface-2: #232323;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-hi: rgba(255, 255, 255, 0.18);
     --text: #ffffff;
     --muted: #b5b5b5;
     --dim: #858585;
+    --dim-2: #5a5a5a;
     --accent: #fbbf24;
     --accent-border: rgba(251, 191, 36, 0.35);
     --accent-bg: rgba(251, 191, 36, 0.10);
     --gain: #10b981;
+    --gain-bg: rgba(16, 185, 129, 0.12);
     --loss: #ef4444;
+    --loss-bg: rgba(239, 68, 68, 0.12);
+    --info: #60a5fa;
     --serif: 'Fraunces', 'Nanum Myeongjo', 'Pretendard', Georgia, serif;
     --sans: 'Pretendard', 'DM Sans', 'Noto Sans KR', system-ui, -apple-system, sans-serif;
     --mono: 'JetBrains Mono', 'Pretendard', 'Noto Sans KR', ui-monospace, monospace;
@@ -31,17 +36,14 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { background: var(--bg); color: var(--text); font-family: var(--sans); }
-  body {
-    min-height: 100vh;
-    background: var(--bg);
-    padding: 24px 16px 80px;
-  }
-  .root { max-width: 760px; margin: 0 auto; }
+  body { min-height: 100vh; padding: 24px 24px 80px; }
+  .root { max-width: 1400px; margin: 0 auto; }
   button { font-family: inherit; cursor: pointer; }
-  input { font-family: inherit; }
+  input, select { font-family: inherit; }
   input::placeholder { color: var(--dim); }
-  input:focus { outline: 1px solid var(--accent); }
-  button:hover { filter: brightness(1.1); }
+  input:focus, select:focus { outline: 1px solid var(--accent); }
+  button:hover { filter: brightness(1.15); }
+  button:disabled:hover { filter: none; }
 
   @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
@@ -49,90 +51,159 @@
   .fade { animation: fadeIn .4s ease; }
 
   /* Header */
-  header.head { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 24px; border-bottom: 1px solid var(--border); animation: fadeIn .5s ease; }
+  header.head { display: flex; justify-content: space-between; align-items: flex-end; padding-bottom: 20px; border-bottom: 1px solid var(--border); margin-bottom: 24px; animation: fadeIn .5s ease; }
   .eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--accent); margin-bottom: 6px; }
   h1.title { font-family: var(--serif); font-size: 36px; font-weight: 500; letter-spacing: -0.02em; }
-  .head-meta { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
-
-  /* Summary */
-  .summary { padding: 32px 4px 24px; animation: fadeIn .6s ease; }
-  .summary-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 12px; }
-  .summary-value { font-family: var(--serif); font-size: 44px; font-weight: 500; letter-spacing: -0.02em; line-height: 1; margin-bottom: 12px; }
-  .summary-delta { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 14px; font-weight: 500; }
-  .market-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-top: 24px; }
-  .market-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
-  .market-label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
-  .market-value { font-family: var(--mono); font-size: 18px; font-weight: 600; margin-bottom: 4px; }
-  .market-delta { font-family: var(--mono); font-size: 12px; font-weight: 500; }
-
-  /* Allocation */
-  .alloc { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 24px; animation: fadeIn .6s ease; }
-  .alloc-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-  .alloc-title { font-family: var(--serif); font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
-  .alloc-base { font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; color: var(--dim); margin-left: auto; }
-  .alloc-body { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
-  .alloc-list { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 180px; }
-  .alloc-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .alloc-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .alloc-pct { font-family: var(--mono); font-size: 13px; font-weight: 600; flex-shrink: 0; }
-  .dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+  .head-meta { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .head-meta-item { display: flex; align-items: center; gap: 6px; }
 
   /* Toolbar */
-  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 20px 0 16px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 24px; }
-  .btn-primary { display: inline-flex; align-items: center; gap: 6px; background: var(--text); color: var(--bg); border: none; border-radius: 8px; padding: 9px 14px; font-size: 13px; font-weight: 600; }
-  .btn-ghost { display: inline-flex; align-items: center; gap: 6px; background: transparent; color: var(--text); border: 1px solid var(--border-hi); border-radius: 8px; padding: 8px 14px; font-size: 13px; font-weight: 500; }
-  .btn-ghost:disabled, .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
-  .save-status { margin-left: auto; color: var(--dim); font-size: 11px; font-family: var(--mono); }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 14px 0 18px; border-bottom: 1px solid var(--border); margin-bottom: 24px; animation: fadeIn .55s ease; }
+  .btn-primary, .btn-ghost, .btn-soft { display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; font-size: 13px; font-weight: 500; transition: filter .15s; }
+  .btn-primary { background: var(--text); color: var(--bg); border: none; padding: 9px 14px; font-weight: 600; }
+  .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border-hi); padding: 8px 14px; }
+  .btn-soft { background: var(--surface-hi); color: var(--text); border: 1px solid var(--border); padding: 8px 12px; }
+  .btn-ghost:disabled, .btn-primary:disabled, .btn-soft:disabled { opacity: 0.4; cursor: not-allowed; }
+  .save-status { margin-left: auto; color: var(--dim); font-size: 11px; font-family: var(--mono); display: flex; align-items: center; gap: 6px; }
 
-  /* Error */
-  .error-bar { display: flex; align-items: center; justify-content: space-between; background: rgba(248, 113, 113, 0.08); border: 1px solid rgba(248, 113, 113, 0.25); border-radius: 8px; padding: 10px 14px; color: var(--loss); font-size: 13px; margin-bottom: 16px; }
-  .error-close { background: transparent; border: none; color: var(--loss); display: flex; }
+  /* KPI row */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; animation: fadeIn .6s ease; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; position: relative; overflow: hidden; }
+  .kpi-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.12em; color: var(--muted); margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .kpi-value { font-family: var(--serif); font-size: 32px; font-weight: 500; letter-spacing: -0.02em; line-height: 1.1; }
+  .kpi-sub { font-family: var(--mono); font-size: 12px; margin-top: 8px; display: flex; align-items: center; gap: 6px; }
+  .kpi-accent-bar { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: var(--accent); }
+  .kpi-accent-bar.gain { background: var(--gain); }
+  .kpi-accent-bar.loss { background: var(--loss); }
+  .kpi-accent-bar.muted { background: var(--dim-2); }
 
-  /* Holdings */
-  .section-title { font-family: var(--serif); font-size: 20px; font-weight: 500; margin-bottom: 16px; letter-spacing: -0.01em; }
-  .grid { display: flex; flex-direction: column; gap: 10px; }
-  .empty { text-align: center; padding: 60px 20px; border: 1px dashed var(--border); border-radius: 12px; }
-  .empty-title { font-family: var(--serif); font-size: 22px; margin-bottom: 6px; }
-  .empty-sub { color: var(--muted); font-size: 14px; }
+  /* Charts grid */
+  .charts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 24px; animation: fadeIn .65s ease; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; min-height: 260px; }
+  .chart-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .chart-icon { color: var(--accent); display: flex; }
+  .chart-title { font-family: var(--serif); font-size: 17px; font-weight: 500; letter-spacing: -0.01em; }
+  .chart-meta { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-left: auto; }
+  .chart-empty { color: var(--muted); font-size: 13px; padding: 32px 0; text-align: center; line-height: 1.6; }
 
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px; animation: fadeIn .4s ease; }
-  .card-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px; gap: 8px; }
-  .ticker-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .ticker-code { font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
-  .market-tag { font-family: var(--mono); font-size: 9px; letter-spacing: 0.1em; color: var(--accent); border: 1px solid var(--accent-border); padding: 2px 6px; border-radius: 4px; }
-  .cat-tag { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; border: 1px solid; }
-  .holding-name { font-size: 13px; color: var(--muted); margin-top: 4px; }
-  .icon-btn { background: transparent; border: none; color: var(--muted); padding: 6px; display: flex; border-radius: 6px; }
-  .card-row { display: flex; justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--border); margin-bottom: 14px; }
-  .meta-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 4px; }
-  .meta-value { font-family: var(--mono); font-size: 14px; font-weight: 500; }
-  .card-foot { display: flex; justify-content: space-between; align-items: flex-end; }
-  .big-num { font-family: var(--mono); font-weight: 600; letter-spacing: -0.01em; font-size: 18px; }
+  /* Donut chart layout */
+  .donut-wrap { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+  .donut-svg { flex-shrink: 0; }
+  .donut-center { font-family: var(--mono); }
+  .legend-list { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 160px; }
+  .legend-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+  .legend-name { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; }
+  .legend-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .legend-pct { font-family: var(--mono); font-weight: 600; flex-shrink: 0; }
+  .dot { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+
+  /* Bar chart rows */
+  .bar-list { display: flex; flex-direction: column; gap: 10px; }
+  .bar-row { display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+  .bar-label { font-family: var(--mono); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-track { position: relative; height: 22px; background: rgba(255,255,255,0.04); border-radius: 4px; overflow: hidden; }
+  .bar-fill { position: absolute; top: 0; bottom: 0; border-radius: 4px; transition: width .4s ease; }
+  .bar-value { font-family: var(--mono); font-size: 11px; font-weight: 600; text-align: right; white-space: nowrap; }
+
+  /* Diverging bar (P/L) */
+  .div-list { display: flex; flex-direction: column; gap: 9px; }
+  .div-row { display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+  .div-track { position: relative; height: 22px; background: rgba(255,255,255,0.03); border-radius: 4px; }
+  .div-track::before { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,0.18); }
+  .div-fill { position: absolute; top: 2px; bottom: 2px; border-radius: 3px; transition: all .4s ease; }
+  .div-fill.pos { background: var(--gain); left: 50%; }
+  .div-fill.neg { background: var(--loss); right: 50%; }
+
+  /* Stacked horizontal bar (market split) */
+  .stack-bar { display: flex; height: 36px; border-radius: 8px; overflow: hidden; margin-bottom: 14px; background: rgba(255,255,255,0.04); }
+  .stack-seg { display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--bg); transition: width .4s ease; }
+  .stack-legend { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .stack-card { background: rgba(255,255,255,0.02); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
+  .stack-card-label { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 6px; }
+  .stack-card-value { font-family: var(--mono); font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .stack-card-sub { font-family: var(--mono); font-size: 11px; }
+
+  /* Holdings table */
+  .holdings-section { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; animation: fadeIn .7s ease; }
+  .holdings-head { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .holdings-title { font-family: var(--serif); font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+  .holdings-meta { font-family: var(--mono); font-size: 11px; color: var(--dim); margin-left: auto; }
+  .table-wrap { overflow-x: auto; }
+  table.holdings { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 900px; }
+  table.holdings thead th { text-align: left; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--muted); padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 500; user-select: none; cursor: pointer; white-space: nowrap; }
+  table.holdings thead th.no-sort { cursor: default; }
+  table.holdings thead th.sorted { color: var(--accent); }
+  table.holdings tbody td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  table.holdings tbody tr:last-child td { border-bottom: none; }
+  table.holdings tbody tr:hover { background: rgba(255,255,255,0.02); }
+  .ticker-cell { display: flex; flex-direction: column; gap: 2px; }
+  .ticker-code { font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: 0.02em; }
+  .ticker-name { font-size: 11px; color: var(--muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .market-tag { font-family: var(--mono); font-size: 9px; letter-spacing: 0.08em; padding: 2px 6px; border-radius: 4px; border: 1px solid; display: inline-block; }
+  .market-tag.kr { color: var(--accent); border-color: var(--accent-border); background: var(--accent-bg); }
+  .market-tag.us { color: var(--info); border-color: rgba(96, 165, 250, 0.35); background: rgba(96, 165, 250, 0.10); }
+  .cat-tag { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 10px; border: 1px solid; display: inline-block; }
+  .num { font-family: var(--mono); font-size: 13px; font-weight: 500; text-align: right; }
+  .num-strong { font-family: var(--mono); font-size: 13px; font-weight: 600; text-align: right; }
   .text-right { text-align: right; }
   .text-gain { color: var(--gain); }
   .text-loss { color: var(--loss); }
   .text-muted { color: var(--muted); }
   .text-dim { color: var(--dim); }
+  .icon-btn { background: transparent; border: none; color: var(--muted); padding: 6px; display: inline-flex; border-radius: 6px; }
+  .icon-btn:hover { color: var(--text); background: rgba(255,255,255,0.06); }
+  .weight-cell { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  .weight-track { width: 60px; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; overflow: hidden; }
+  .weight-fill { height: 100%; background: var(--accent); border-radius: 3px; }
+
+  /* Empty state */
+  .empty { text-align: center; padding: 60px 20px; border: 1px dashed var(--border); border-radius: 12px; }
+  .empty-title { font-family: var(--serif); font-size: 24px; margin-bottom: 8px; }
+  .empty-sub { color: var(--muted); font-size: 14px; line-height: 1.6; }
+  .empty-hint { color: var(--dim); font-size: 12px; margin-top: 14px; font-family: var(--mono); }
+
+  /* Error bar */
+  .error-bar { display: flex; align-items: center; justify-content: space-between; background: var(--loss-bg); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 10px 14px; color: var(--loss); font-size: 13px; margin-bottom: 16px; }
+  .error-close { background: transparent; border: none; color: var(--loss); display: flex; padding: 2px; }
 
   /* Modal */
   .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 50; animation: fadeIn .2s ease; }
-  .modal { background: var(--surface-hi); border: 1px solid var(--border-hi); border-radius: 14px; padding: 24px; width: 100%; max-width: 440px; max-height: 90vh; overflow: auto; }
+  .modal { background: var(--surface-hi); border: 1px solid var(--border-hi); border-radius: 14px; padding: 24px; width: 100%; max-width: 460px; max-height: 90vh; overflow: auto; }
+  .modal.modal-wide { max-width: 580px; }
   .modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
   .modal-title { font-family: var(--serif); font-size: 22px; font-weight: 500; }
+  .modal-sub { color: var(--muted); font-size: 13px; line-height: 1.6; margin-bottom: 16px; }
   .field { margin-bottom: 14px; }
   .lbl { display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 6px; }
   .input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; color: var(--text); font-family: var(--mono); font-size: 14px; font-weight: 500; }
   .seg-group { display: flex; gap: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 4px; }
   .seg-btn { flex: 1; background: transparent; border: none; color: var(--muted); padding: 8px 12px; font-size: 13px; font-weight: 500; border-radius: 6px; }
-  .seg-btn.active { background: var(--surface); color: var(--text); }
+  .seg-btn.active { background: var(--surface-2); color: var(--text); }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
   /* SVG icons */
   .icon { width: 1em; height: 1em; display: inline-block; vertical-align: -0.125em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* Responsive */
+  @media (max-width: 1100px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .charts-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    body { padding: 16px 12px 60px; }
+    h1.title { font-size: 28px; }
+    .kpi-row { grid-template-columns: 1fr 1fr; gap: 10px; }
+    .kpi { padding: 14px 16px; }
+    .kpi-value { font-size: 24px; }
+    .chart-card { padding: 16px; }
+    .holdings-section { padding: 14px; }
+    .save-status { margin-left: 0; flex-basis: 100%; }
+  }
 </style>
 </head>
 <body>
 <div class="root" id="app"></div>
+<input type="file" id="import-file" accept="application/json,.json" style="display:none">
 
 <script>
 (function () {
@@ -147,10 +218,20 @@
     closeS: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M18 6 6 18M6 6l12 12"/></svg>',
     spinner: '<svg class="icon spin" viewBox="0 0 24 24" width="14" height="14"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>',
     wallet: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4M3 5v14a2 2 0 0 0 2 2h16v-5M16 12h6v4h-6a2 2 0 0 1 0-4z"/></svg>',
-    up: '<svg class="icon" viewBox="0 0 24 24" width="16" height="16"><path d="M7 17 17 7M7 7h10v10"/></svg>',
-    down: '<svg class="icon" viewBox="0 0 24 24" width="16" height="16"><path d="M7 7l10 10M17 7v10H7"/></svg>',
+    up: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M7 17 17 7M7 7h10v10"/></svg>',
+    down: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M7 7l10 10M17 7v10H7"/></svg>',
     pencil: '<svg class="icon" viewBox="0 0 24 24" width="13" height="13"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/></svg>',
     pie: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+    bar: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M3 3v18h18M7 16V8m5 8V5m5 11v-6"/></svg>',
+    scale: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M16 16l3-8 3 8M2 16l3-8 3 8M7 21h10M12 3v18M3 7h2c2 0 5-1 7-2 2 1 5 2 7 2h2"/></svg>',
+    globe: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20"/></svg>',
+    download: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+    upload: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>',
+    coins: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18M7 6h1v4M16.71 13.88l.71.71-2.82 2.82"/></svg>',
+    trend: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M3 17l6-6 4 4 8-8M14 7h7v7"/></svg>',
+    hash: '<svg class="icon" viewBox="0 0 24 24" width="14" height="14"><path d="M4 9h16M4 15h16M10 3 8 21M16 3l-2 18"/></svg>',
+    sortUp: '<svg class="icon" viewBox="0 0 24 24" width="10" height="10"><path d="M7 14l5-5 5 5"/></svg>',
+    sortDown: '<svg class="icon" viewBox="0 0 24 24" width="10" height="10"><path d="M7 10l5 5 5-5"/></svg>',
   };
 
   // ---------- design tokens ----------
@@ -158,13 +239,21 @@
   const UNCATEGORIZED = '미분류';
   const SUGGESTED = ['반도체', 'IT/플랫폼', '자동차', '금융', '바이오/제약', '에너지', '소비재', 'ETF', '배당주', '성장주'];
   const STORAGE_KEY = 'portfolio.v1';
+  const KR_COLOR = '#fbbf24';
+  const US_COLOR = '#60a5fa';
 
   // ---------- formatters ----------
   const fmtKRW = (n) => '₩' + Math.round(n).toLocaleString('en-US');
   const fmtUSD = (n) => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fmtMoney = (n, c) => (c === 'KRW' ? fmtKRW(n) : fmtUSD(n));
+  const fmtKRWcompact = (n) => {
+    const abs = Math.abs(n);
+    if (abs >= 1e8) return (n / 1e8).toFixed(2) + '억';
+    if (abs >= 1e4) return (n / 1e4).toFixed(1) + '만';
+    return Math.round(n).toLocaleString('en-US');
+  };
   const fmtPct = (n) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
-  const fmtSigned = (n, c) => (n >= 0 ? '+' : '−') + fmtMoney(Math.abs(n), c);
+  const fmtSignedKRW = (n) => (n >= 0 ? '+' : '−') + fmtKRW(Math.abs(n));
   const fmtDate = (iso) => {
     if (!iso) return '—';
     const d = new Date(iso);
@@ -177,11 +266,12 @@
     holdings: [],
     fxRate: null,
     lastUpdated: null,
-    loading: true,
     updating: false,
-    saveStatus: 'idle', // idle | saving | saved | error
+    saveStatus: 'idle',
     error: null,
-    dialog: null, // null | { mode: 'add' | 'edit', holding? }
+    info: null,
+    dialog: null,
+    sort: { key: 'value', dir: 'desc' },
   };
 
   // ---------- persistence (localStorage) ----------
@@ -226,6 +316,82 @@
     }
   }
 
+  // ---------- backup / restore (file based) ----------
+  function exportJSON() {
+    try {
+      const payload = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        holdings: state.holdings,
+        fxRate: state.fxRate,
+        lastUpdated: state.lastUpdated,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const today = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `portfolio-${today}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      state.info = `백업 파일을 다운로드했습니다 (${state.holdings.length}개 종목)`;
+      render();
+      setTimeout(() => { if (state.info) { state.info = null; render(); } }, 2500);
+    } catch (e) {
+      state.error = '백업 실패: ' + e.message;
+      render();
+    }
+  }
+
+  function importJSON(file) {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        if (!Array.isArray(d.holdings)) throw new Error('holdings 배열을 찾을 수 없습니다');
+        const valid = d.holdings.filter(h =>
+          typeof h === 'object' && h && typeof h.ticker === 'string' &&
+          (h.market === 'KR' || h.market === 'US') &&
+          Number(h.shares) > 0 && Number(h.buyPrice) > 0
+        );
+        if (valid.length === 0) throw new Error('유효한 종목이 없습니다');
+        const ok = confirm(
+          `백업 파일에서 ${valid.length}개 종목을 불러옵니다.\n` +
+          `현재 ${state.holdings.length}개 종목이 모두 대체됩니다. 계속하시겠습니까?`
+        );
+        if (!ok) return;
+        state.holdings = valid.map(h => ({
+          id: h.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
+          ticker: String(h.ticker).toUpperCase(),
+          name: h.name || '',
+          market: h.market,
+          shares: Number(h.shares),
+          buyPrice: Number(h.buyPrice),
+          buyDate: h.buyDate || new Date().toISOString().slice(0, 10),
+          category: h.category || '',
+          currentPrice: typeof h.currentPrice === 'number' ? h.currentPrice : null,
+          currency: h.currency || (h.market === 'KR' ? 'KRW' : 'USD'),
+          lastPriceAt: h.lastPriceAt || null,
+        }));
+        if (typeof d.fxRate === 'number') state.fxRate = d.fxRate;
+        if (d.lastUpdated) state.lastUpdated = d.lastUpdated;
+        state.error = null;
+        save();
+        state.info = `${valid.length}개 종목을 복원했습니다`;
+        render();
+        setTimeout(() => { if (state.info) { state.info = null; render(); } }, 2500);
+      } catch (e) {
+        state.error = '파일 복원 실패: ' + e.message;
+        render();
+      }
+    };
+    reader.onerror = () => { state.error = '파일을 읽을 수 없습니다'; render(); };
+    reader.readAsText(file);
+  }
+
   // ---------- actions ----------
   function addOrUpdate(data, editId) {
     if (editId) {
@@ -241,6 +407,8 @@
   }
 
   function remove(id) {
+    const h = state.holdings.find(x => x.id === id);
+    if (h && !confirm(`${h.ticker}${h.name ? ' (' + h.name + ')' : ''} 종목을 삭제하시겠습니까?`)) return;
     state.holdings = state.holdings.filter(h => h.id !== id);
     save();
   }
@@ -265,10 +433,9 @@
   }
 
   // ---------- price fetch ----------
-  // Yahoo Finance via CORS proxies. Korean tickers need .KS (KOSPI) or .KQ (KOSDAQ).
   function yahooSymbol(h) {
     if (h.market === 'US') return h.ticker;
-    return h.ticker + '.KS'; // try KOSPI first, KOSDAQ as fallback later
+    return h.ticker + '.KS';
   }
 
   const PROXIES = [
@@ -291,18 +458,15 @@
     for (let i = 0; i < PROXIES.length; i++) {
       try {
         const proxiedUrl = PROXIES[i](url);
-        console.log(`[fetch] ${symbol} via proxy ${i + 1}/${PROXIES.length}`);
         const r = await withTimeout(fetch(proxiedUrl), 10000);
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         const meta = data?.chart?.result?.[0]?.meta;
         if (meta && typeof meta.regularMarketPrice === 'number') {
-          console.log(`[fetch] ${symbol} = ${meta.regularMarketPrice} ${meta.currency}`);
           return { price: meta.regularMarketPrice, currency: meta.currency };
         }
         throw new Error('응답에 가격 없음');
       } catch (e) {
-        console.warn(`[fetch] ${symbol} proxy ${i + 1} 실패:`, e.message);
         lastErr = e;
       }
     }
@@ -317,12 +481,10 @@
       if (d?.rates?.KRW) return d.rates.KRW;
       throw new Error('환율 데이터 없음');
     } catch (e) {
-      console.warn('[fx] 1차 실패:', e.message);
       try {
         const fx = await fetchYahoo('USDKRW=X');
         return fx.price;
       } catch (e2) {
-        console.warn('[fx] 2차 실패:', e2.message);
         return null;
       }
     }
@@ -337,7 +499,6 @@
           try {
             return { id: h.id, ...(await fetchYahoo(yahooSymbol(h))) };
           } catch (e) {
-            // Korean: try KOSDAQ if KOSPI failed
             if (h.market === 'KR') {
               try {
                 return { id: h.id, ...(await fetchYahoo(h.ticker + '.KQ')) };
@@ -373,78 +534,87 @@
     }
   }
 
-  // ---------- derived ----------
-  function totals() {
-    const t = { kr: { cost: 0, value: 0 }, us: { cost: 0, value: 0 }, hasPrice: false };
-    state.holdings.forEach(h => {
-      const cost = h.shares * h.buyPrice;
-      const value = h.currentPrice != null ? h.shares * h.currentPrice : null;
-      if (value != null) t.hasPrice = true;
-      if (h.market === 'KR') { t.kr.cost += cost; t.kr.value += value ?? cost; }
-      else { t.us.cost += cost; t.us.value += value ?? cost; }
-    });
-    t.krPnl = t.kr.value - t.kr.cost;
-    t.usPnl = t.us.value - t.us.cost;
-    t.krPct = t.kr.cost ? (t.krPnl / t.kr.cost) * 100 : 0;
-    t.usPct = t.us.cost ? (t.usPnl / t.us.cost) * 100 : 0;
-    if (state.fxRate) {
-      const cost = t.kr.cost + t.us.cost * state.fxRate;
-      const value = t.kr.value + t.us.value * state.fxRate;
-      t.combined = { cost, value, pnl: value - cost, pct: cost ? ((value - cost) / cost) * 100 : 0 };
-    }
-    return t;
-  }
-
-  function categoryOrder() {
-    const seen = new Set(); const order = [];
-    state.holdings.forEach(h => {
-      const c = (h.category || '').trim() || UNCATEGORIZED;
-      if (!seen.has(c)) { seen.add(c); order.push(c); }
-    });
-    return order;
-  }
-
-  function colorFor(cat) {
-    const o = categoryOrder();
-    return CAT_COLORS[Math.max(0, o.indexOf(cat)) % CAT_COLORS.length];
-  }
-
-  function allocation() {
-    if (state.holdings.length === 0) return null;
-    const allKR = state.holdings.every(h => h.market === 'KR');
-    const allUS = state.holdings.every(h => h.market === 'US');
+  // ---------- derived metrics ----------
+  // Convert all values into KRW base if FX available; otherwise use native and flag mixed.
+  function derive() {
+    const holdings = state.holdings;
+    const fx = state.fxRate;
+    const hasKR = holdings.some(h => h.market === 'KR');
+    const hasUS = holdings.some(h => h.market === 'US');
+    const allKR = holdings.length > 0 && !hasUS;
+    const allUS = holdings.length > 0 && !hasKR;
     const baseCcy = allUS ? 'USD' : 'KRW';
-    const needsFx = !allKR && !allUS;
-    if (needsFx && !state.fxRate) return { needsFx: true };
+    const needsFx = hasKR && hasUS;
+    const fxOk = !needsFx || (fx && fx > 0);
 
-    const map = {};
-    state.holdings.forEach(h => {
-      const cat = (h.category || '').trim() || UNCATEGORIZED;
-      const v = h.currentPrice != null ? h.shares * h.currentPrice : h.shares * h.buyPrice;
-      let inBase;
-      if (h.market === 'KR') inBase = baseCcy === 'KRW' ? v : v / state.fxRate;
-      else inBase = baseCcy === 'USD' ? v : v * state.fxRate;
-      if (!map[cat]) map[cat] = { name: cat, value: 0 };
-      map[cat].value += inBase;
+    const toBase = (v, market) => {
+      if (baseCcy === 'KRW') return market === 'KR' ? v : v * (fx || 0);
+      return market === 'US' ? v : v / (fx || 1);
+    };
+
+    const items = holdings.map(h => {
+      const cost = h.shares * h.buyPrice;
+      const hasPrice = h.currentPrice != null;
+      const value = hasPrice ? h.shares * h.currentPrice : null;
+      const pnl = hasPrice ? value - cost : null;
+      const pct = hasPrice ? (pnl / cost) * 100 : null;
+      const cur = h.market === 'KR' ? 'KRW' : 'USD';
+      const costBase = toBase(cost, h.market);
+      const valueBase = hasPrice ? toBase(value, h.market) : costBase;
+      const pnlBase = hasPrice ? valueBase - costBase : 0;
+      return { h, cost, hasPrice, value, pnl, pct, cur, costBase, valueBase, pnlBase };
     });
-    const arr = Object.values(map);
-    const total = arr.reduce((s, a) => s + a.value, 0);
+
+    const tCost = items.reduce((s, it) => s + it.costBase, 0);
+    const tValue = items.reduce((s, it) => s + it.valueBase, 0);
+    const tPnl = tValue - tCost;
+    const tPct = tCost ? (tPnl / tCost) * 100 : 0;
+    const anyPrice = items.some(it => it.hasPrice);
+
+    // Per-market totals (in native ccy)
+    const krItems = items.filter(it => it.h.market === 'KR');
+    const usItems = items.filter(it => it.h.market === 'US');
+    const krCost = krItems.reduce((s, it) => s + it.cost, 0);
+    const krValue = krItems.reduce((s, it) => s + (it.hasPrice ? it.value : it.cost), 0);
+    const usCost = usItems.reduce((s, it) => s + it.cost, 0);
+    const usValue = usItems.reduce((s, it) => s + (it.hasPrice ? it.value : it.cost), 0);
+
+    // Allocation by category (in base currency)
+    const byCat = {};
+    items.forEach(it => {
+      const cat = (it.h.category || '').trim() || UNCATEGORIZED;
+      if (!byCat[cat]) byCat[cat] = { name: cat, value: 0, cost: 0, pnl: 0 };
+      byCat[cat].value += it.valueBase;
+      byCat[cat].cost += it.costBase;
+      byCat[cat].pnl += it.pnlBase;
+    });
+    const catList = Object.values(byCat).sort((a, b) => b.value - a.value);
+
+    // Category color order = first appearance in holdings
+    const catOrder = [];
+    const seen = new Set();
+    holdings.forEach(h => {
+      const c = (h.category || '').trim() || UNCATEGORIZED;
+      if (!seen.has(c)) { seen.add(c); catOrder.push(c); }
+    });
+    const colorFor = (cat) => CAT_COLORS[Math.max(0, catOrder.indexOf(cat)) % CAT_COLORS.length];
+
     return {
-      currency: baseCcy,
-      total,
-      categories: arr.map(a => ({ ...a, pct: total ? (a.value / total) * 100 : 0 }))
-                     .sort((a, b) => b.value - a.value),
-      hasPrice: totals().hasPrice,
+      items, holdings, baseCcy, needsFx, fxOk, anyPrice,
+      tCost, tValue, tPnl, tPct,
+      krCost, krValue, krCount: krItems.length,
+      usCost, usValue, usCount: usItems.length,
+      catList, colorFor,
     };
   }
 
-  // ---------- SVG donut chart ----------
+  // ---------- charts ----------
   function donutSVG(data, size = 160) {
-    const cx = size / 2, cy = size / 2, rOuter = 75, rInner = 50;
+    const cx = size / 2, cy = size / 2, rOuter = size * 0.46, rInner = size * 0.30;
     const total = data.reduce((s, d) => s + d.value, 0);
     if (total === 0) return '';
-    let angle = -Math.PI / 2; // start at top
-    const gap = 0.02; // small gap between slices in radians
+    let angle = -Math.PI / 2;
+    const gap = data.length > 1 ? 0.02 : 0;
     const paths = data.map((d) => {
       const slice = (d.value / total) * Math.PI * 2 - gap;
       const start = angle + gap / 2;
@@ -455,126 +625,27 @@
       const x2 = cx + rOuter * Math.cos(end), y2 = cy + rOuter * Math.sin(end);
       const x3 = cx + rInner * Math.cos(end), y3 = cy + rInner * Math.sin(end);
       const x4 = cx + rInner * Math.cos(start), y4 = cy + rInner * Math.sin(start);
-      const path = [
-        'M', x1, y1,
-        'A', rOuter, rOuter, 0, large, 1, x2, y2,
-        'L', x3, y3,
-        'A', rInner, rInner, 0, large, 0, x4, y4,
-        'Z',
-      ].join(' ');
+      const path = ['M', x1, y1, 'A', rOuter, rOuter, 0, large, 1, x2, y2,
+        'L', x3, y3, 'A', rInner, rInner, 0, large, 0, x4, y4, 'Z'].join(' ');
       return `<path d="${path}" fill="${d.color}"/>`;
     }).join('');
-    return `<svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${paths}</svg>`;
+    return `<svg class="donut-svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${paths}</svg>`;
   }
 
   // ---------- templates ----------
   function tplHeader() {
+    const last = state.lastUpdated ? `최근 갱신 · ${fmtDate(state.lastUpdated)}` : '갱신 기록 없음';
     return `
       <header class="head">
         <div>
-          <div class="eyebrow">INVESTMENT LEDGER</div>
-          <h1 class="title">포트폴리오</h1>
+          <div class="eyebrow">PORTFOLIO DASHBOARD</div>
+          <h1 class="title">포트폴리오 대시보드</h1>
         </div>
-        <div class="head-meta" style="color: var(--accent);">
-          ${I.wallet}<span style="color: var(--muted);">${state.holdings.length} 종목</span>
+        <div class="head-meta">
+          <div class="head-meta-item" style="color: var(--accent);">${I.wallet}<span style="color: var(--muted);">${state.holdings.length} 종목</span></div>
+          <div class="head-meta-item">${last}</div>
         </div>
       </header>`;
-  }
-
-  function tplSummary() {
-    const t = totals();
-    let summaryBody = '';
-    if (t.combined) {
-      const pos = t.combined.pnl >= 0;
-      summaryBody = `
-        <div class="summary-label">총 평가금액 (KRW 환산)</div>
-        <div class="summary-value">${fmtKRW(t.combined.value)}</div>
-        <div class="summary-delta" style="color: ${pos ? 'var(--gain)' : 'var(--loss)'}">
-          ${pos ? I.up : I.down}
-          <span>${pos ? '+' : '−'}${fmtKRW(Math.abs(t.combined.pnl))}</span>
-          <span class="text-muted" style="margin: 0 6px;">·</span>
-          <span>${fmtPct(t.combined.pct)}</span>
-        </div>`;
-    } else {
-      summaryBody = `
-        <div class="summary-label">총 매입금액</div>
-        <div class="summary-value">
-          ${t.kr.cost > 0 ? fmtKRW(t.kr.cost) : ''}
-          ${t.kr.cost > 0 && t.us.cost > 0 ? '<span class="text-muted"> · </span>' : ''}
-          ${t.us.cost > 0 ? fmtUSD(t.us.cost) : ''}
-          ${state.holdings.length === 0 ? '<span class="text-dim">—</span>' : ''}
-        </div>
-        <div class="summary-delta" style="color: var(--muted); font-family: var(--sans); font-size: 13px;">
-          ${state.holdings.length === 0 ? '종목을 추가하세요' : '가격 업데이트를 실행하세요'}
-        </div>`;
-    }
-
-    let marketGrid = '';
-    if (t.kr.cost > 0 || t.us.cost > 0) {
-      const card = (label, value, cost, pnl, pct, ccy) => {
-        const v = t.hasPrice ? value : cost;
-        const color = pnl >= 0 ? 'var(--gain)' : 'var(--loss)';
-        const arrow = pnl >= 0 ? '▲' : '▼';
-        return `
-          <div class="market-card">
-            <div class="market-label">${label}</div>
-            <div class="market-value">${fmtMoney(v, ccy)}</div>
-            ${t.hasPrice
-              ? `<div class="market-delta" style="color: ${color}">${arrow} ${fmtPct(pct)}</div>`
-              : `<div class="market-delta text-dim">매입가 기준</div>`}
-          </div>`;
-      };
-      marketGrid = `<div class="market-grid">
-        ${t.kr.cost > 0 ? card('한국 (KOSPI / KOSDAQ)', t.kr.value, t.kr.cost, t.krPnl, t.krPct, 'KRW') : ''}
-        ${t.us.cost > 0 ? card('미국 (US)', t.us.value, t.us.cost, t.usPnl, t.usPct, 'USD') : ''}
-      </div>`;
-    }
-    return `<section class="summary">${summaryBody}${marketGrid}</section>`;
-  }
-
-  function tplAllocation() {
-    if (state.holdings.length === 0) return '';
-    const a = allocation();
-    if (!a) return '';
-    if (a.needsFx) {
-      return `<section class="alloc">
-        <div class="alloc-head">${I.pie}<h2 class="alloc-title">분류별 비중</h2></div>
-        <div class="text-muted" style="font-size: 13px; padding: 8px 0;">
-          한국과 미국 종목이 혼재되어 있어 환율 정보가 필요합니다.
-          <span style="color: var(--accent);">가격 업데이트</span>를 실행하세요.
-        </div>
-      </section>`;
-    }
-    const data = a.categories.map(c => ({ ...c, color: colorFor(c.name) }));
-    const onlyUncat = data.length === 1 && data[0]?.name === UNCATEGORIZED;
-
-    let body;
-    if (onlyUncat) {
-      body = `<div class="text-muted" style="font-size: 13px; padding: 8px 0; line-height: 1.5;">
-        종목별 분류를 설정하면 비중을 시각화할 수 있습니다. 아래 카드의 ${I.pencil} 아이콘으로 분류를 추가하세요.
-      </div>`;
-    } else {
-      body = `<div class="alloc-body">
-        <div style="width: 160px; height: 160px; flex-shrink: 0;">${donutSVG(data)}</div>
-        <div class="alloc-list">
-          ${data.map(c => `
-            <div class="alloc-row">
-              <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-                <span class="dot" style="background: ${c.color};"></span>
-                <span class="alloc-name">${escape(c.name)}</span>
-              </div>
-              <div class="alloc-pct">${c.pct.toFixed(1)}%</div>
-            </div>`).join('')}
-        </div>
-      </div>`;
-    }
-    return `<section class="alloc">
-      <div class="alloc-head">
-        ${I.pie}<h2 class="alloc-title">분류별 비중</h2>
-        <span class="alloc-base">${a.currency} · ${a.hasPrice ? '평가액' : '매입가'} 기준</span>
-      </div>
-      ${body}
-    </section>`;
   }
 
   function tplToolbar() {
@@ -582,97 +653,368 @@
     if (state.saveStatus === 'saving') status = '<span class="text-muted">저장 중…</span>';
     else if (state.saveStatus === 'saved') status = '<span class="text-gain">✓ 저장됨</span>';
     else if (state.saveStatus === 'error') status = '<span class="text-loss">✗ 저장 실패</span>';
-    else status = state.lastUpdated ? `시세 갱신 · ${fmtDate(state.lastUpdated)}` : '시세 갱신 기록 없음';
+    else status = '<span style="color: var(--dim);">자동 저장 활성</span>';
 
     const dis = state.holdings.length === 0 || state.updating;
+    const empty = state.holdings.length === 0;
     return `<div class="toolbar">
       <button class="btn-primary" data-act="open-add">${I.plus} 종목 추가</button>
-      <button class="btn-ghost" data-act="open-prices" ${state.holdings.length === 0 ? 'disabled' : ''}>
-        ✎ 가격 입력
-      </button>
+      <button class="btn-ghost" data-act="open-prices" ${empty ? 'disabled' : ''}>${I.pencil} 가격 입력</button>
       <button class="btn-ghost" data-act="update-prices" ${dis ? 'disabled' : ''}>
-        ${state.updating ? I.spinner : I.refresh}
-        ${state.updating ? '갱신 중…' : '자동 갱신'}
+        ${state.updating ? I.spinner : I.refresh}${state.updating ? '갱신 중…' : '자동 갱신'}
       </button>
+      <span style="width: 1px; height: 22px; background: var(--border); margin: 0 4px;"></span>
+      <button class="btn-soft" data-act="export-json" ${empty ? 'disabled' : ''} title="JSON 파일로 백업 다운로드">${I.download} 백업</button>
+      <button class="btn-soft" data-act="import-json" title="JSON 파일에서 복원">${I.upload} 복원</button>
       <div class="save-status">${status}</div>
     </div>`;
   }
 
-  function tplError() {
-    if (!state.error) return '';
-    return `<div class="error-bar">
-      <span>${escape(state.error)}</span>
-      <button class="error-close" data-act="dismiss-error">${I.closeS}</button>
+  function tplKPI(D) {
+    if (state.holdings.length === 0) return '';
+    const ccy = D.baseCcy;
+    const fmt = ccy === 'KRW' ? fmtKRW : fmtUSD;
+
+    const valueDisplay = D.fxOk ? fmt(D.tValue) : '<span class="text-dim">—</span>';
+    const costDisplay = fmt(D.tCost);
+    const pnlSign = D.tPnl >= 0;
+    const pnlDisplay = D.fxOk && D.anyPrice
+      ? `<span style="color: ${pnlSign ? 'var(--gain)' : 'var(--loss)'}">${pnlSign ? '+' : '−'}${fmt(Math.abs(D.tPnl))}</span>`
+      : '<span class="text-dim">—</span>';
+    const pctDisplay = D.fxOk && D.anyPrice
+      ? `<span style="color: ${pnlSign ? 'var(--gain)' : 'var(--loss)'}">${pnlSign ? I.up : I.down}${fmtPct(D.tPct)}</span>`
+      : '<span class="text-dim">—</span>';
+
+    const pnlBar = !D.anyPrice || !D.fxOk ? 'muted' : pnlSign ? 'gain' : 'loss';
+
+    return `<div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-accent-bar"></div>
+        <div class="kpi-label">${I.wallet} 총 평가금액</div>
+        <div class="kpi-value">${valueDisplay}</div>
+        <div class="kpi-sub text-muted">매입 ${costDisplay}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-accent-bar ${pnlBar}"></div>
+        <div class="kpi-label">${I.coins} 평가손익</div>
+        <div class="kpi-value">${pnlDisplay}</div>
+        <div class="kpi-sub text-muted">${ccy} 환산 기준</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-accent-bar ${pnlBar}"></div>
+        <div class="kpi-label">${I.trend} 수익률</div>
+        <div class="kpi-value">${pctDisplay}</div>
+        <div class="kpi-sub text-muted">${D.anyPrice ? '평가액 / 매입액' : '가격 갱신 필요'}</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-accent-bar"></div>
+        <div class="kpi-label">${I.hash} 종목 수</div>
+        <div class="kpi-value">${state.holdings.length}<span style="font-size: 18px; color: var(--muted); margin-left: 4px;">개</span></div>
+        <div class="kpi-sub text-muted">한국 ${D.krCount} · 미국 ${D.usCount}</div>
+      </div>
     </div>`;
   }
 
-  function tplCard(h) {
-    const cost = h.shares * h.buyPrice;
-    const hasPrice = h.currentPrice != null;
-    const value = hasPrice ? h.shares * h.currentPrice : null;
-    const pnl = hasPrice ? value - cost : null;
-    const pct = hasPrice ? (pnl / cost) * 100 : null;
-    const cur = h.market === 'KR' ? 'KRW' : 'USD';
-    const colorVar = !hasPrice ? 'var(--muted)' : pnl >= 0 ? 'var(--gain)' : 'var(--loss)';
-    const cat = (h.category || '').trim();
-    const catColor = cat ? colorFor(cat) : null;
-
-    return `<article class="card">
-      <div class="card-head">
-        <div style="min-width: 0; flex: 1;">
-          <div class="ticker-row">
-            <span class="ticker-code">${escape(h.ticker)}</span>
-            <span class="market-tag">${h.market}</span>
-            ${cat ? `<span class="cat-tag" style="color: ${catColor}; border-color: ${catColor}50; background: ${catColor}10;">${escape(cat)}</span>` : ''}
-          </div>
-          ${h.name ? `<div class="holding-name">${escape(h.name)}</div>` : ''}
-        </div>
-        <div style="display: flex; gap: 2px;">
-          <button class="icon-btn" data-act="edit" data-id="${h.id}" aria-label="편집">${I.pencil}</button>
-          <button class="icon-btn" data-act="delete" data-id="${h.id}" aria-label="삭제">${I.trash}</button>
-        </div>
+  function chartCard(icon, title, meta, body) {
+    return `<div class="chart-card">
+      <div class="chart-head">
+        <span class="chart-icon">${icon}</span>
+        <h3 class="chart-title">${title}</h3>
+        ${meta ? `<span class="chart-meta">${meta}</span>` : ''}
       </div>
-      <div class="card-row">
-        <div>
-          <div class="meta-label">보유 / 매수단가</div>
-          <div class="meta-value">${h.shares.toLocaleString()} <span class="text-muted">×</span> ${fmtMoney(h.buyPrice, cur)}</div>
-        </div>
-        <div class="text-right">
-          <div class="meta-label">현재가</div>
-          <div class="meta-value">${hasPrice ? fmtMoney(h.currentPrice, cur) : '<span class="text-dim">—</span>'}</div>
-        </div>
-      </div>
-      <div class="card-foot">
-        <div>
-          <div class="meta-label">평가금액</div>
-          <div class="big-num">${hasPrice ? fmtMoney(value, cur) : fmtMoney(cost, cur)}</div>
-        </div>
-        <div class="text-right">
-          <div class="meta-label">손익</div>
-          <div class="big-num" style="color: ${colorVar}">
-            ${hasPrice
-              ? `${pnl >= 0 ? '+' : '−'}${fmtMoney(Math.abs(pnl), cur)} <span style="font-size: 13px;">(${fmtPct(pct)})</span>`
-              : '—'}
-          </div>
-        </div>
-      </div>
-    </article>`;
+      ${body}
+    </div>`;
   }
 
-  function tplHoldings() {
+  function tplChartAllocation(D) {
+    const title = '분류별 비중';
+    if (!D.fxOk) {
+      return chartCard(I.pie, title, '', `<div class="chart-empty">한국·미국 종목이 함께 있어 환율 정보가 필요합니다.<br><span style="color: var(--accent);">자동 갱신</span> 또는 <span style="color: var(--accent);">가격 입력</span>을 실행하세요.</div>`);
+    }
+    const onlyUncat = D.catList.length === 1 && D.catList[0].name === UNCATEGORIZED;
+    if (onlyUncat) {
+      return chartCard(I.pie, title, '', `<div class="chart-empty">종목별 분류를 설정하면 비중을 시각화할 수 있습니다.<br>아래 표의 ${I.pencil} 버튼으로 분류를 추가하세요.</div>`);
+    }
+    const total = D.catList.reduce((s, c) => s + c.value, 0);
+    const data = D.catList.map(c => ({ ...c, color: D.colorFor(c.name), pct: total ? (c.value / total) * 100 : 0 }));
+    const fmt = D.baseCcy === 'KRW' ? fmtKRWcompact : (n) => '$' + Math.round(n).toLocaleString('en-US');
+    const meta = `${D.baseCcy} · ${D.anyPrice ? '평가액' : '매입가'} 기준`;
+    const body = `<div class="donut-wrap">
+      <div style="position: relative; width: 180px; height: 180px;">
+        ${donutSVG(data, 180)}
+        <div style="position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; pointer-events: none;">
+          <div style="font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 0.08em;">TOTAL</div>
+          <div class="donut-center" style="font-size: 14px; font-weight: 600; margin-top: 2px;">${fmt(total)}</div>
+        </div>
+      </div>
+      <div class="legend-list">
+        ${data.map(c => `
+          <div class="legend-row">
+            <div class="legend-name">
+              <span class="dot" style="background: ${c.color};"></span>
+              <span>${escape(c.name)}</span>
+            </div>
+            <div class="legend-pct">${c.pct.toFixed(1)}%</div>
+          </div>`).join('')}
+      </div>
+    </div>`;
+    return chartCard(I.pie, title, meta, body);
+  }
+
+  function tplChartTopHoldings(D) {
+    const title = '종목별 평가금액';
+    if (!D.fxOk) {
+      return chartCard(I.bar, title, '', `<div class="chart-empty">환율 정보가 필요합니다.</div>`);
+    }
+    if (D.items.length === 0) {
+      return chartCard(I.bar, title, '', `<div class="chart-empty">데이터 없음</div>`);
+    }
+    const sorted = [...D.items].sort((a, b) => b.valueBase - a.valueBase).slice(0, 10);
+    const max = sorted[0].valueBase || 1;
+    const fmt = D.baseCcy === 'KRW' ? fmtKRWcompact : (n) => '$' + Math.round(n).toLocaleString('en-US');
+    const total = D.tValue || 1;
+    const meta = `상위 ${sorted.length} · ${D.baseCcy}`;
+    const body = `<div class="bar-list">
+      ${sorted.map(it => {
+        const pct = (it.valueBase / max) * 100;
+        const ofTotal = (it.valueBase / total) * 100;
+        const cat = (it.h.category || '').trim() || UNCATEGORIZED;
+        const color = D.colorFor(cat);
+        return `<div class="bar-row">
+          <div class="bar-label" title="${escape(it.h.ticker)}">${escape(it.h.ticker)}</div>
+          <div class="bar-track" title="${escape(it.h.name || '')}">
+            <div class="bar-fill" style="width: ${pct.toFixed(1)}%; background: ${color};"></div>
+          </div>
+          <div class="bar-value">${fmt(it.valueBase)} <span class="text-dim" style="font-size: 10px;">(${ofTotal.toFixed(1)}%)</span></div>
+        </div>`;
+      }).join('')}
+    </div>`;
+    return chartCard(I.bar, title, meta, body);
+  }
+
+  function tplChartPnL(D) {
+    const title = '종목별 손익';
+    if (!D.anyPrice) {
+      return chartCard(I.scale, title, '', `<div class="chart-empty">현재가 정보가 없습니다.<br><span style="color: var(--accent);">자동 갱신</span>을 실행하세요.</div>`);
+    }
+    if (!D.fxOk) {
+      return chartCard(I.scale, title, '', `<div class="chart-empty">환율 정보가 필요합니다.</div>`);
+    }
+    const withPrice = D.items.filter(it => it.hasPrice);
+    if (withPrice.length === 0) {
+      return chartCard(I.scale, title, '', `<div class="chart-empty">표시할 데이터가 없습니다.</div>`);
+    }
+    const sorted = [...withPrice].sort((a, b) => Math.abs(b.pnlBase) - Math.abs(a.pnlBase)).slice(0, 10);
+    const max = Math.max(...sorted.map(it => Math.abs(it.pnlBase)), 1);
+    const fmt = D.baseCcy === 'KRW' ? fmtKRWcompact : (n) => '$' + Math.round(n).toLocaleString('en-US');
+    const meta = `상위 ${sorted.length} · ${D.baseCcy}`;
+    const body = `<div class="div-list">
+      ${sorted.map(it => {
+        const w = (Math.abs(it.pnlBase) / max) * 50;
+        const pos = it.pnlBase >= 0;
+        const sign = pos ? '+' : '−';
+        return `<div class="div-row">
+          <div class="bar-label" title="${escape(it.h.ticker)}">${escape(it.h.ticker)}</div>
+          <div class="div-track">
+            <div class="div-fill ${pos ? 'pos' : 'neg'}" style="width: ${w.toFixed(2)}%;"></div>
+          </div>
+          <div class="bar-value" style="color: ${pos ? 'var(--gain)' : 'var(--loss)'};">
+            ${sign}${fmt(Math.abs(it.pnlBase))} <span class="text-dim" style="font-size: 10px;">(${fmtPct(it.pct)})</span>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+    return chartCard(I.scale, title, meta, body);
+  }
+
+  function tplChartMarketSplit(D) {
+    const title = '시장별 분포';
+    if (D.holdings.length === 0) {
+      return chartCard(I.globe, title, '', `<div class="chart-empty">데이터 없음</div>`);
+    }
+    if (!D.fxOk) {
+      return chartCard(I.globe, title, '', `<div class="chart-empty">한국·미국 종목이 함께 있어 환율 정보가 필요합니다.</div>`);
+    }
+    // Use base-currency converted values to compare apples to apples
+    const krBase = D.items.filter(it => it.h.market === 'KR').reduce((s, it) => s + it.valueBase, 0);
+    const usBase = D.items.filter(it => it.h.market === 'US').reduce((s, it) => s + it.valueBase, 0);
+    const total = krBase + usBase;
+    if (total === 0) {
+      return chartCard(I.globe, title, '', `<div class="chart-empty">데이터 없음</div>`);
+    }
+    const krPct = (krBase / total) * 100;
+    const usPct = (usBase / total) * 100;
+
+    const stack = `<div class="stack-bar">
+      ${krPct > 0 ? `<div class="stack-seg" style="width: ${krPct}%; background: ${KR_COLOR};">${krPct >= 8 ? '🇰🇷 ' + krPct.toFixed(1) + '%' : ''}</div>` : ''}
+      ${usPct > 0 ? `<div class="stack-seg" style="width: ${usPct}%; background: ${US_COLOR};">${usPct >= 8 ? '🇺🇸 ' + usPct.toFixed(1) + '%' : ''}</div>` : ''}
+    </div>`;
+
+    const krPnl = D.krValue - D.krCost;
+    const usPnl = D.usValue - D.usCost;
+    const krPctNative = D.krCost ? (krPnl / D.krCost) * 100 : 0;
+    const usPctNative = D.usCost ? (usPnl / D.usCost) * 100 : 0;
+
+    const cards = `<div class="stack-legend">
+      <div class="stack-card" style="border-left: 3px solid ${KR_COLOR};">
+        <div class="stack-card-label">한국 · ${D.krCount}종목</div>
+        <div class="stack-card-value">${D.krCost > 0 ? fmtKRWcompact(D.krValue) : '—'}</div>
+        <div class="stack-card-sub" style="color: ${D.krCount === 0 ? 'var(--dim)' : krPnl >= 0 ? 'var(--gain)' : 'var(--loss)'};">
+          ${D.krCount === 0 ? '—' : (D.anyPrice ? `${krPnl >= 0 ? '+' : ''}${fmtKRWcompact(krPnl)} · ${fmtPct(krPctNative)}` : '매입가 기준')}
+        </div>
+      </div>
+      <div class="stack-card" style="border-left: 3px solid ${US_COLOR};">
+        <div class="stack-card-label">미국 · ${D.usCount}종목</div>
+        <div class="stack-card-value">${D.usCost > 0 ? fmtUSD(D.usValue) : '—'}</div>
+        <div class="stack-card-sub" style="color: ${D.usCount === 0 ? 'var(--dim)' : usPnl >= 0 ? 'var(--gain)' : 'var(--loss)'};">
+          ${D.usCount === 0 ? '—' : (D.anyPrice ? `${usPnl >= 0 ? '+' : ''}${fmtUSD(Math.abs(usPnl))} · ${fmtPct(usPctNative)}` : '매입가 기준')}
+        </div>
+      </div>
+    </div>`;
+    const meta = `${D.baseCcy} 환산 기준`;
+    return chartCard(I.globe, title, meta, stack + cards);
+  }
+
+  function tplCharts(D) {
+    if (state.holdings.length === 0) return '';
+    return `<div class="charts-grid">
+      ${tplChartAllocation(D)}
+      ${tplChartTopHoldings(D)}
+      ${tplChartPnL(D)}
+      ${tplChartMarketSplit(D)}
+    </div>`;
+  }
+
+  // ---------- holdings table ----------
+  const SORT_KEYS = {
+    ticker: it => it.h.ticker,
+    market: it => it.h.market,
+    category: it => (it.h.category || '').trim() || UNCATEGORIZED,
+    shares: it => it.h.shares,
+    buyPrice: it => it.h.buyPrice,
+    currentPrice: it => it.h.currentPrice ?? -Infinity,
+    value: it => it.valueBase,
+    pnl: it => it.hasPrice ? it.pnlBase : -Infinity,
+    pct: it => it.hasPrice ? it.pct : -Infinity,
+    weight: it => it.valueBase,
+  };
+
+  function sortIndicator(key) {
+    if (state.sort.key !== key) return '';
+    return state.sort.dir === 'asc' ? I.sortUp : I.sortDown;
+  }
+
+  function thSort(key, label, opts) {
+    const right = opts && opts.right;
+    const sorted = state.sort.key === key ? 'sorted' : '';
+    return `<th class="${sorted}" data-act="sort" data-key="${key}" style="${right ? 'text-align: right;' : ''}">
+      <span style="display: inline-flex; align-items: center; gap: 4px; ${right ? 'flex-direction: row-reverse;' : ''}">
+        ${label} ${sortIndicator(key)}
+      </span>
+    </th>`;
+  }
+
+  function tplHoldingsTable(D) {
     if (state.holdings.length === 0) {
-      return `<section>
-        <h2 class="section-title">보유 종목</h2>
+      return `<section class="holdings-section">
         <div class="empty">
           <div class="empty-title">아직 보유 종목이 없습니다</div>
-          <div class="empty-sub">상단의 <span style="color: var(--accent);">종목 추가</span>로 시작해보세요.</div>
+          <div class="empty-sub">상단의 <span style="color: var(--accent);">종목 추가</span>로 시작하거나,<br>이전에 받은 백업 파일이 있다면 <span style="color: var(--accent);">복원</span>으로 불러오세요.</div>
+          <div class="empty-hint">데이터는 브라우저에 자동 저장되며, JSON 백업으로 영구 보관할 수 있습니다.</div>
         </div>
       </section>`;
     }
-    return `<section>
-      <h2 class="section-title">보유 종목</h2>
-      <div class="grid">${state.holdings.map(tplCard).join('')}</div>
+
+    const total = D.tValue || 1;
+    const sorter = SORT_KEYS[state.sort.key] || SORT_KEYS.value;
+    const dir = state.sort.dir === 'asc' ? 1 : -1;
+    const sorted = [...D.items].sort((a, b) => {
+      const va = sorter(a), vb = sorter(b);
+      if (typeof va === 'string') return va.localeCompare(vb) * dir;
+      return (va - vb) * dir;
+    });
+
+    const rows = sorted.map(it => {
+      const h = it.h;
+      const cat = (h.category || '').trim();
+      const catColor = cat ? D.colorFor(cat) : null;
+      const weight = D.fxOk ? (it.valueBase / total) * 100 : 0;
+      const pnlColor = !it.hasPrice ? 'var(--muted)' : it.pnl >= 0 ? 'var(--gain)' : 'var(--loss)';
+
+      return `<tr>
+        <td>
+          <div class="ticker-cell">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <span class="ticker-code">${escape(h.ticker)}</span>
+              <span class="market-tag ${h.market === 'KR' ? 'kr' : 'us'}">${h.market}</span>
+            </div>
+            ${h.name ? `<span class="ticker-name" title="${escape(h.name)}">${escape(h.name)}</span>` : ''}
+          </div>
+        </td>
+        <td>
+          ${cat ? `<span class="cat-tag" style="color: ${catColor}; border-color: ${catColor}55; background: ${catColor}12;">${escape(cat)}</span>` : '<span class="text-dim">—</span>'}
+        </td>
+        <td class="num">${h.shares.toLocaleString()}</td>
+        <td class="num">${fmtMoney(h.buyPrice, it.cur)}</td>
+        <td class="num">${it.hasPrice ? fmtMoney(h.currentPrice, it.cur) : '<span class="text-dim">—</span>'}</td>
+        <td class="num-strong">${it.hasPrice ? fmtMoney(it.value, it.cur) : fmtMoney(it.cost, it.cur)}</td>
+        <td class="num-strong" style="color: ${pnlColor};">
+          ${it.hasPrice ? `${it.pnl >= 0 ? '+' : '−'}${fmtMoney(Math.abs(it.pnl), it.cur)}` : '<span class="text-dim">—</span>'}
+        </td>
+        <td class="num" style="color: ${pnlColor};">${it.hasPrice ? fmtPct(it.pct) : '<span class="text-dim">—</span>'}</td>
+        <td>
+          <div class="weight-cell">
+            <div class="weight-track"><div class="weight-fill" style="width: ${weight.toFixed(1)}%;"></div></div>
+            <span class="num" style="min-width: 40px;">${D.fxOk ? weight.toFixed(1) + '%' : '—'}</span>
+          </div>
+        </td>
+        <td>
+          <div style="display: flex; gap: 2px; justify-content: flex-end;">
+            <button class="icon-btn" data-act="edit" data-id="${h.id}" aria-label="편집">${I.pencil}</button>
+            <button class="icon-btn" data-act="delete" data-id="${h.id}" aria-label="삭제">${I.trash}</button>
+          </div>
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `<section class="holdings-section">
+      <div class="holdings-head">
+        ${I.wallet}<h2 class="holdings-title">보유 종목</h2>
+        <span class="holdings-meta">${state.holdings.length}개 · 헤더 클릭으로 정렬</span>
+      </div>
+      <div class="table-wrap">
+        <table class="holdings">
+          <thead>
+            <tr>
+              ${thSort('ticker', '종목')}
+              ${thSort('category', '분류')}
+              ${thSort('shares', '수량', { right: true })}
+              ${thSort('buyPrice', '매수가', { right: true })}
+              ${thSort('currentPrice', '현재가', { right: true })}
+              ${thSort('value', '평가금액', { right: true })}
+              ${thSort('pnl', '손익', { right: true })}
+              ${thSort('pct', '수익률', { right: true })}
+              ${thSort('weight', '비중', { right: true })}
+              <th class="no-sort"></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
     </section>`;
+  }
+
+  function tplError() {
+    let msg = '';
+    if (state.error) msg = `<div class="error-bar">
+      <span>${escape(state.error)}</span>
+      <button class="error-close" data-act="dismiss-error">${I.closeS}</button>
+    </div>`;
+    if (state.info) msg += `<div class="error-bar" style="background: var(--gain-bg); border-color: rgba(16,185,129,0.25); color: var(--gain);">
+      <span>${escape(state.info)}</span>
+      <button class="error-close" data-act="dismiss-info" style="color: var(--gain);">${I.closeS}</button>
+    </div>`;
+    return msg;
   }
 
   function tplDialog() {
@@ -735,14 +1077,12 @@
   function tplPriceDialog() {
     const needsFx = state.holdings.some(h => h.market === 'KR') && state.holdings.some(h => h.market === 'US');
     return `<div class="modal-bg" data-act="modal-bg">
-      <div class="modal" data-stop>
+      <div class="modal modal-wide" data-stop>
         <div class="modal-head">
           <h3 class="modal-title">현재가 입력</h3>
           <button class="icon-btn" data-act="close-dialog">${I.close}</button>
         </div>
-        <p style="color: var(--muted); font-size: 13px; margin-bottom: 16px; line-height: 1.5;">
-          네이버 금융, 구글 파이낸스 등에서 현재가를 확인 후 입력하세요. 빈 칸은 기존 값이 유지됩니다.
-        </p>
+        <p class="modal-sub">네이버 금융, 구글 파이낸스 등에서 현재가를 확인 후 입력하세요. 빈 칸은 기존 값이 유지됩니다.</p>
         ${state.holdings.map(h => `
           <div class="field">
             <label class="lbl">${escape(h.ticker)}${h.name ? ' · ' + escape(h.name) : ''} <span style="color: var(--dim);">(${h.market === 'KR' ? 'KRW' : 'USD'})</span></label>
@@ -767,15 +1107,15 @@
   // ---------- render & events ----------
   function render() {
     const root = document.getElementById('app');
-    // Preserve dialog form values across re-renders if dialog is open
-    const formValues = state.dialog ? readForm() : null;
+    const formValues = state.dialog && state.dialog.mode !== 'prices' ? readForm() : null;
+    const D = derive();
     root.innerHTML =
       tplHeader() +
-      tplSummary() +
-      tplAllocation() +
       tplToolbar() +
       tplError() +
-      tplHoldings() +
+      tplKPI(D) +
+      tplCharts(D) +
+      tplHoldingsTable(D) +
       tplDialog();
     if (formValues) writeForm(formValues);
   }
@@ -816,19 +1156,39 @@
     }
     else if (act === 'delete') { remove(id); }
     else if (act === 'update-prices') { updatePrices(); }
+    else if (act === 'export-json') { exportJSON(); }
+    else if (act === 'import-json') { document.getElementById('import-file').click(); }
     else if (act === 'close-dialog' || act === 'modal-bg') {
       if (act === 'modal-bg' && e.target.closest('[data-stop]')) return;
       state.dialog = null; render();
     }
     else if (act === 'set-market') {
-      state.dialog = { ...state.dialog, market: btn.dataset.v };
-      // Preserve existing form values
       const v = readForm();
+      state.dialog = { ...state.dialog, market: btn.dataset.v };
       render();
       writeForm(v);
     }
     else if (act === 'submit-dialog') { submitForm(); }
     else if (act === 'dismiss-error') { state.error = null; render(); }
+    else if (act === 'dismiss-info') { state.info = null; render(); }
+    else if (act === 'sort') {
+      const key = btn.dataset.key;
+      if (state.sort.key === key) {
+        state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        state.sort.key = key;
+        state.sort.dir = (key === 'ticker' || key === 'category' || key === 'market') ? 'asc' : 'desc';
+      }
+      render();
+    }
+  });
+
+  document.addEventListener('change', (e) => {
+    if (e.target && e.target.id === 'import-file') {
+      const file = e.target.files && e.target.files[0];
+      if (file) importJSON(file);
+      e.target.value = '';
+    }
   });
 
   function submitForm() {
@@ -851,7 +1211,7 @@
 
   // ---------- init ----------
   if (!hasLocalStorage()) {
-    state.error = 'localStorage를 사용할 수 없는 환경입니다 (시크릿 모드 등). 데이터가 저장되지 않습니다.';
+    state.error = 'localStorage를 사용할 수 없는 환경입니다 (시크릿 모드 등). 브라우저 자동 저장은 비활성이지만, JSON 백업/복원으로 데이터를 보관할 수 있습니다.';
   } else {
     load();
   }
