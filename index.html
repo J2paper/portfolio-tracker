@@ -260,6 +260,35 @@
   }
   .toolbar-divider { width: 0; border-left: 1px solid var(--bevel-dark); border-right: 1px solid var(--bevel-light); height: 22px; margin: 0 4px; }
 
+  /* Market filter segmented control (in toolbar) */
+  .filter-seg { display: inline-flex; gap: 0; }
+  .filter-btn {
+    background: var(--surface);
+    color: var(--text);
+    border: 2px solid;
+    border-color: var(--bevel-light) var(--bevel-darker) var(--bevel-darker) var(--bevel-light);
+    box-shadow: inset 1px 1px 0 var(--bevel-light-2), inset -1px -1px 0 var(--bevel-dark);
+    border-radius: 0;
+    padding: 4px 10px;
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: bold;
+    cursor: pointer;
+    min-height: 26px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .filter-btn + .filter-btn { margin-left: -2px; }
+  .filter-btn.active {
+    border-color: var(--bevel-darker) var(--bevel-light) var(--bevel-light) var(--bevel-darker);
+    box-shadow: inset 1px 1px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light-2);
+    background: var(--surface-2);
+    color: var(--accent);
+  }
+  .filter-btn:disabled { color: var(--dim-2); cursor: not-allowed; }
+  .filter-count { font-family: var(--mono); font-size: 14px; font-weight: 400; opacity: 0.7; }
+
   /* ============================================================
      KPI windows
      ============================================================ */
@@ -757,6 +786,7 @@
     dialog: null,
     sort: { key: 'value', dir: 'desc' },
     theme: 'dark',
+    marketFilter: 'ALL', // ALL | KR | US — view-only filter for the dashboard
   };
 
   // ---------- id helpers ----------
@@ -1332,7 +1362,11 @@
 
   // ---------- derived metrics ----------
   function derive() {
-    const holdings = state.holdings;
+    const allHoldings = state.holdings;
+    const f = state.marketFilter;
+    const holdings = f === 'KR' ? allHoldings.filter(h => h.market === 'KR')
+                  : f === 'US' ? allHoldings.filter(h => h.market === 'US')
+                  : allHoldings;
     const fx = state.fxRate;
     const hasKR = holdings.some(h => h.market === 'KR');
     const hasUS = holdings.some(h => h.market === 'US');
@@ -1490,12 +1524,24 @@
     const nextLabel = ccyPref === null ? 'KRW' : ccyPref === 'KRW' ? 'USD' : 'AUTO';
     const ccyBtn = `<button class="btn-soft" data-act="cycle-currency" title="Display currency — click to switch to ${nextLabel}">${ccyLabel}</button>`;
 
+    const mf = state.marketFilter;
+    const allCount = state.holdings.length;
+    const krCount = state.holdings.filter(h => h.market === 'KR').length;
+    const usCount = state.holdings.filter(h => h.market === 'US').length;
+    const filterBtns = `<div class="filter-seg" role="group" aria-label="Market filter">
+      <button class="filter-btn ${mf === 'ALL' ? 'active' : ''}" data-act="set-filter" data-v="ALL" title="Show all holdings">ALL <span class="filter-count">${allCount}</span></button>
+      <button class="filter-btn ${mf === 'KR' ? 'active' : ''}" data-act="set-filter" data-v="KR" title="Show only Korean holdings" ${krCount === 0 ? 'disabled' : ''}>KR <span class="filter-count">${krCount}</span></button>
+      <button class="filter-btn ${mf === 'US' ? 'active' : ''}" data-act="set-filter" data-v="US" title="Show only US holdings" ${usCount === 0 ? 'disabled' : ''}>US <span class="filter-count">${usCount}</span></button>
+    </div>`;
+
     return `<div class="toolbar">
       <button class="btn-primary" data-act="open-add">${I.plus} Add Holding</button>
       <button class="btn-ghost" data-act="open-prices" ${empty ? 'disabled' : ''}>${I.pencil} Edit Prices</button>
       <button class="btn-ghost" data-act="update-prices" ${dis ? 'disabled' : ''}>
         ${state.updating ? I.spinner : I.refresh}${state.updating ? 'Updating…' : 'Auto Update'}
       </button>
+      <span class="toolbar-divider"></span>
+      ${filterBtns}
       <span class="toolbar-divider"></span>
       <button class="btn-soft" data-act="export-json" title="Download all profiles as JSON">${I.download} Backup</button>
       <button class="btn-soft" data-act="import-json" title="Restore from a JSON file">${I.upload} Restore</button>
@@ -1507,7 +1553,7 @@
   }
 
   function tplKPI(D) {
-    if (state.holdings.length === 0) return '';
+    if (D.holdings.length === 0) return '';
     const ccy = D.baseCcy;
     const fmt = ccy === 'KRW' ? fmtKRW : fmtUSD;
 
@@ -1713,12 +1759,15 @@
   }
 
   function tplCharts(D) {
-    if (state.holdings.length === 0) return '';
+    if (D.holdings.length === 0) return '';
+    // The market-split chart degenerates to a single 100% segment when filtered
+    // to a single market, so hide it in that case.
+    const showSplit = state.marketFilter === 'ALL';
     return `<div class="charts-grid">
       ${tplChartAllocation(D)}
       ${tplChartTopHoldings(D)}
       ${tplChartPnL(D)}
-      ${tplChartMarketSplit(D)}
+      ${showSplit ? tplChartMarketSplit(D) : ''}
     </div>`;
   }
 
@@ -1762,6 +1811,19 @@
           <div class="empty-title">▒ NO HOLDINGS YET ▒</div>
           <div class="empty-sub">Click <strong style="color: var(--accent);">Add Holding</strong> above to get started,<br>or use <strong style="color: var(--accent);">Restore</strong> to load a previous backup.</div>
           <div class="empty-hint">Data auto-saves to your browser. Use JSON backup for permanent storage.</div>
+        </div>
+      </section>`;
+    }
+    if (D.holdings.length === 0) {
+      const hidden = state.holdings.length;
+      return `<section class="holdings-section">
+        <div class="holdings-head">
+          ${I.wallet}<h2 class="holdings-title">Holdings</h2>
+          <span class="holdings-meta">filter: ${escape(state.marketFilter)}</span>
+        </div>
+        <div class="empty">
+          <div class="empty-title">▒ NO ${escape(state.marketFilter)} HOLDINGS ▒</div>
+          <div class="empty-sub">${hidden} holding${hidden === 1 ? '' : 's'} hidden by current market filter.<br>Click <strong style="color: var(--accent);">ALL</strong> in the toolbar to see them.</div>
         </div>
       </section>`;
     }
@@ -1822,10 +1884,14 @@
       </tr>`;
     }).join('');
 
+    const filtered = state.marketFilter !== 'ALL';
+    const headMeta = filtered
+      ? `${D.holdings.length} of ${state.holdings.length} · ${escape(state.marketFilter)} only`
+      : `${state.holdings.length} total · click any header to sort`;
     return `<section class="holdings-section">
       <div class="holdings-head">
         ${I.wallet}<h2 class="holdings-title">Holdings</h2>
-        <span class="holdings-meta">${state.holdings.length} total · click any header to sort</span>
+        <span class="holdings-meta">${headMeta}</span>
       </div>
       <div class="table-wrap">
         <table class="holdings">
@@ -2138,6 +2204,13 @@
       const c = state.displayCurrency;
       state.displayCurrency = c === null ? 'KRW' : c === 'KRW' ? 'USD' : null;
       save();
+    }
+    else if (act === 'set-filter') {
+      const v = btn.dataset.v;
+      if (v === 'ALL' || v === 'KR' || v === 'US') {
+        state.marketFilter = v;
+        render();
+      }
     }
     else if (act === 'manage-profiles') { state.dialog = { mode: 'profiles' }; render(); }
     else if (act === 'quick-add-profile') {
