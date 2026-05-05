@@ -2504,14 +2504,15 @@
     const isHoldingDialog = state.dialog && (state.dialog.mode === 'add' || state.dialog.mode === 'edit');
     let topFields = null;
     if (isHoldingDialog) {
-      // Capture in-progress edits before re-render so they survive add-lot / remove-lot.
+      // Capture top-level fields so they survive a re-render. Lot rows are kept
+      // in sync continuously via the input listener (syncDialogLotsFromDOM), so
+      // we don't snapshot them here — that would overwrite handler-driven
+      // changes like remove-lot.
       topFields = {
         ticker: document.getElementById('f-ticker')?.value,
         name: document.getElementById('f-name')?.value,
         category: document.getElementById('f-category')?.value,
       };
-      const liveLots = readLotsFromDOM();
-      if (liveLots.length > 0) state.dialog.lots = liveLots;
     }
     const D = derive();
     root.innerHTML =
@@ -2541,6 +2542,17 @@
       lots.push({ id, shares, price, date });
     });
     return lots;
+  }
+
+  // Sync the open dialog's lot state from the live DOM. Called on every keystroke
+  // in a lot field so that state.dialog.lots always reflects what the user typed,
+  // and so subsequent add/remove handlers can mutate state directly without the
+  // render pass re-reading a stale DOM and clobbering their changes.
+  function syncDialogLotsFromDOM() {
+    if (!state.dialog || !state.dialog.lots) return;
+    const live = readLotsFromDOM();
+    if (live.length === 0) return;
+    state.dialog.lots = live;
   }
 
   function readForm() {
@@ -2607,16 +2619,18 @@
     }
     else if (act === 'add-lot') {
       if (state.dialog) {
-        state.dialog.lots = [...readLotsFromDOM(), { id: makeLotId(), shares: '', price: '', date: new Date().toISOString().slice(0, 10) }];
+        syncDialogLotsFromDOM();
+        state.dialog.lots = [...(state.dialog.lots || []), { id: makeLotId(), shares: '', price: '', date: new Date().toISOString().slice(0, 10) }];
         render();
       }
     }
     else if (act === 'remove-lot') {
       if (state.dialog) {
+        syncDialogLotsFromDOM();
         const lotId = btn.dataset.lotId;
-        const live = readLotsFromDOM().filter(l => l.id !== lotId);
-        if (live.length === 0) return; // Don't allow removing the last lot
-        state.dialog.lots = live;
+        const remaining = (state.dialog.lots || []).filter(l => l.id !== lotId);
+        if (remaining.length === 0) return; // Always keep at least one lot row
+        state.dialog.lots = remaining;
         render();
       }
     }
@@ -2741,6 +2755,7 @@
 
   document.addEventListener('input', (e) => {
     if (e.target && e.target.matches('[data-lot-field]')) {
+      syncDialogLotsFromDOM();
       updateLotSummary();
     } else if (e.target && e.target.id === 'f-ticker') {
       scheduleTickerSearch(e.target.value);
