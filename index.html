@@ -669,6 +669,47 @@
   /* SVG icons */
   .icon { width: 1em; height: 1em; display: inline-block; vertical-align: -0.125em; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
+  /* Holding detail sub-panel */
+  .detail-panel { margin-bottom: 14px; }
+  .detail-body { padding: 10px 14px 14px; }
+  .detail-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+    margin-bottom: 14px;
+    background: var(--surface-2);
+    padding: 10px 12px;
+    border: 2px solid;
+    border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+  }
+  .detail-stat { display: flex; flex-direction: column; gap: 2px; }
+  .detail-stat-label { font-family: var(--sans); font-size: 16px; font-weight: bold; color: var(--muted); }
+  .detail-stat-value { font-family: var(--mono); font-size: 19px; }
+  .detail-chart-label { font-family: var(--sans); font-size: 16px; font-weight: bold; color: var(--muted); margin: 12px 0 6px; }
+  .detail-chart-wrap {
+    background: var(--surface-2);
+    padding: 8px;
+    border: 2px solid;
+    border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+  }
+
+  /* Clickable ticker name in holdings table */
+  .ticker-link {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 2px;
+    padding: 0;
+    text-align: left;
+  }
+  .ticker-link:hover { color: var(--accent-2); }
+  .ticker-link:focus-visible { outline: 1px dotted var(--text); outline-offset: 2px; }
+  table.holdings tbody tr.row-selected { background: var(--accent-bg); }
+  table.holdings tbody tr.row-selected:hover { background: var(--accent-bg); }
+
   /* Custom scrollbars (WebKit only) */
   ::-webkit-scrollbar { width: 16px; height: 16px; }
   ::-webkit-scrollbar-track { background: var(--surface-2); border: 1px solid var(--bevel-dark); }
@@ -787,6 +828,13 @@
     sort: { key: 'value', dir: 'desc' },
     theme: 'dark',
     marketFilter: 'ALL', // ALL | KR | US — view-only filter for the dashboard
+    selectedHoldingId: null,
+    detailRange: '1y',
+    valueRange: '1y',
+    historyCache: {},        // key: 'symbol_range' -> { points, currency, error?, fetchedAt }
+    historyLoading: {},      // key: 'symbol_range' -> bool
+    valueHistoryCache: {},   // key: range -> { points, currency, error?, fetchedAt }
+    valueHistoryLoading: {}, // key: range -> bool
   };
 
   // ---------- id helpers ----------
@@ -1299,6 +1347,223 @@
     if (box) { box.classList.remove('open'); box.innerHTML = ''; }
   }
 
+  // ---------- price history ----------
+  // Fetch daily closes from Yahoo's chart endpoint via the proxy chain.
+  async function fetchHistory(symbol, range, interval) {
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/' + encodeURIComponent(symbol)
+      + '?range=' + encodeURIComponent(range) + '&interval=' + encodeURIComponent(interval || '1d');
+    let lastErr;
+    for (let i = 0; i < PROXIES.length; i++) {
+      try {
+        const r = await withTimeout(fetch(PROXIES[i](url)), 10000);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        const result = data?.chart?.result?.[0];
+        if (!result) throw new Error('No chart result');
+        const ts = result.timestamp || [];
+        const closes = result.indicators?.quote?.[0]?.close || [];
+        const points = [];
+        for (let j = 0; j < ts.length; j++) {
+          if (typeof ts[j] === 'number' && typeof closes[j] === 'number') {
+            points.push({ x: ts[j] * 1000, y: closes[j] });
+          }
+        }
+        return { points, currency: result.meta?.currency || null, symbol: result.meta?.symbol || symbol };
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('All proxies failed');
+  }
+
+  // Try Yahoo for a holding, falling back from .KS to .KQ for Korean tickers.
+  async function fetchHoldingHistory(h, range, interval) {
+    try {
+      return await fetchHistory(yahooSymbol(h), range, interval);
+    } catch (e) {
+      if (h.market === 'KR') {
+        return await fetchHistory(h.ticker + '.KQ', range, interval);
+      }
+      throw e;
+    }
+  }
+
+  // Pick a sensible interval for a given range so we don't request 5y of intraday data.
+  function intervalFor(range) {
+    if (range === '5y' || range === '2y') return '1wk';
+    if (range === 'max') return '1mo';
+    return '1d';
+  }
+
+  // ---------- SVG line chart ----------
+  function lineChartSVG(points, opts) {
+    opts = opts || {};
+    const w = opts.width || 1100;
+    const h = opts.height || 280;
+    const pL = 70, pR = 24, pT = 14, pB = 30;
+    const iW = w - pL - pR;
+    const iH = h - pT - pB;
+    if (!points || points.length === 0) return '';
+
+    const xMin = points[0].x;
+    const xMax = points[points.length - 1].x || (xMin + 1);
+    let yMin = Infinity, yMax = -Infinity;
+    for (const p of points) { if (p.y < yMin) yMin = p.y; if (p.y > yMax) yMax = p.y; }
+    if (opts.refLine != null) {
+      yMin = Math.min(yMin, opts.refLine);
+      yMax = Math.max(yMax, opts.refLine);
+    }
+    const yRange = (yMax - yMin) || Math.abs(yMax) || 1;
+    yMin -= yRange * 0.05;
+    yMax += yRange * 0.05;
+
+    const sx = x => pL + ((x - xMin) / (xMax - xMin || 1)) * iW;
+    const sy = y => pT + (1 - (y - yMin) / (yMax - yMin || 1)) * iH;
+
+    const d = points.map((p, i) => (i === 0 ? 'M' : 'L') + sx(p.x).toFixed(1) + ',' + sy(p.y).toFixed(1)).join(' ');
+
+    const fy = opts.formatY || (v => v.toFixed(2));
+    const fx = opts.formatX || (v => new Date(v).toLocaleDateString('en-US', { month: 'short', year: '2-digit' }));
+
+    const yTicks = 5;
+    const yEls = [];
+    for (let i = 0; i < yTicks; i++) {
+      const y = yMin + (i / (yTicks - 1)) * (yMax - yMin);
+      const yp = sy(y);
+      yEls.push(`<line x1="${pL}" x2="${w - pR}" y1="${yp.toFixed(1)}" y2="${yp.toFixed(1)}" stroke="currentColor" stroke-opacity="0.15" stroke-dasharray="2 3"/>`);
+      yEls.push(`<text x="${pL - 6}" y="${(yp + 5).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="14" fill="currentColor" opacity="0.7">${escape(fy(y))}</text>`);
+    }
+
+    const xTicks = 6;
+    const xEls = [];
+    for (let i = 0; i < xTicks; i++) {
+      const x = xMin + (i / (xTicks - 1)) * (xMax - xMin);
+      xEls.push(`<text x="${sx(x).toFixed(1)}" y="${(h - pB + 18).toFixed(1)}" text-anchor="middle" font-family="var(--mono)" font-size="14" fill="currentColor" opacity="0.7">${escape(fx(x))}</text>`);
+    }
+
+    let refEl = '';
+    if (opts.refLine != null) {
+      const ry = sy(opts.refLine);
+      const refColor = opts.refColor || '#e8b14d';
+      refEl = `<line x1="${pL}" x2="${w - pR}" y1="${ry.toFixed(1)}" y2="${ry.toFixed(1)}" stroke="${refColor}" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <text x="${(w - pR - 4).toFixed(1)}" y="${(ry - 4).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="14" font-weight="bold" fill="${refColor}">${escape(opts.refLabel || ('avg ' + fy(opts.refLine)))}</text>`;
+    }
+
+    const markEls = (opts.markers || []).map(m => {
+      const x = sx(m.x);
+      if (x < pL || x > w - pR) return '';
+      const y = sy(m.y);
+      const c = m.color || '#5a8794';
+      return `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${pT}" y2="${(h - pB).toFixed(1)}" stroke="${c}" stroke-opacity="0.45" stroke-dasharray="2 4"/>
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4.5" fill="${c}" stroke="var(--surface)" stroke-width="1.5"/>`;
+    }).join('');
+
+    const lineColor = opts.color || '#5a8794';
+    return `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg" style="width: 100%; height: auto; max-height: 360px; color: var(--text);">
+      ${yEls.join('')}
+      ${refEl}
+      ${markEls}
+      <path d="${d}" fill="none" stroke="${lineColor}" stroke-width="2"/>
+      ${xEls.join('')}
+    </svg>`;
+  }
+
+  async function ensureHoldingHistory(holding, range) {
+    const key = (yahooSymbol(holding)) + '_' + range;
+    const cached = state.historyCache[key];
+    if (cached && !cached.error) return;
+    if (state.historyLoading[key]) return;
+    state.historyLoading[key] = true;
+    render();
+    try {
+      const data = await fetchHoldingHistory(holding, range, intervalFor(range));
+      state.historyCache[key] = { ...data, fetchedAt: Date.now() };
+    } catch (e) {
+      state.historyCache[key] = { points: [], currency: null, error: e.message || String(e) };
+    } finally {
+      state.historyLoading[key] = false;
+      render();
+    }
+  }
+
+  // Compute portfolio value over time. For each timestamp on the union timeline,
+  // sum (sharesOwnedAtThatDate × priceAtThatDate) across holdings, converting to
+  // the current display base via FX history (USDKRW=X) when needed.
+  async function ensureValueHistory(range) {
+    const cached = state.valueHistoryCache[range];
+    if (cached && !cached.error) return;
+    if (state.valueHistoryLoading[range]) return;
+    state.valueHistoryLoading[range] = true;
+    render();
+    try {
+      if (state.holdings.length === 0) throw new Error('No holdings to chart');
+      const D = derive();
+      const baseCcy = D.baseCcy;
+      const interval = intervalFor(range);
+      const fxNeeded = state.holdings.some(h => h.market === 'KR') && state.holdings.some(h => h.market === 'US')
+                    || (baseCcy === 'KRW' && state.holdings.some(h => h.market === 'US'))
+                    || (baseCcy === 'USD' && state.holdings.some(h => h.market === 'KR'));
+
+      const symbolFetches = state.holdings.map(h =>
+        fetchHoldingHistory(h, range, interval).then(data => ({ holding: h, data }), () => ({ holding: h, data: null }))
+      );
+      const fxFetch = fxNeeded ? fetchHistory('USDKRW=X', range, interval).catch(() => null) : Promise.resolve(null);
+      const [results, fxData] = await Promise.all([Promise.all(symbolFetches), fxFetch]);
+
+      const valid = results.filter(r => r.data && r.data.points.length > 0);
+      if (valid.length === 0) throw new Error('No price history available for any holding');
+      if (fxNeeded && !fxData) throw new Error('FX history (USDKRW) unavailable');
+
+      // Build sorted union of timestamps from all sources
+      const tsSet = new Set();
+      valid.forEach(r => r.data.points.forEach(p => tsSet.add(p.x)));
+      if (fxData) fxData.points.forEach(p => tsSet.add(p.x));
+      const timestamps = [...tsSet].sort((a, b) => a - b);
+
+      // priceAt: last known close at-or-before ts, via binary search
+      const priceAt = (pts, ts) => {
+        let lo = 0, hi = pts.length - 1;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (pts[mid].x <= ts) lo = mid + 1; else hi = mid - 1;
+        }
+        return hi >= 0 ? pts[hi].y : null;
+      };
+
+      const points = [];
+      for (const ts of timestamps) {
+        let total = 0;
+        let anyContribution = false;
+        let abort = false;
+        const fx = fxData ? priceAt(fxData.points, ts) : null;
+        for (const r of valid) {
+          // Sum only lots already purchased at this ts
+          const lotsAt = (r.holding.lots || []).filter(l => new Date(l.date).getTime() <= ts);
+          if (lotsAt.length === 0) continue;
+          const shares = lotsAt.reduce((s, l) => s + l.shares, 0);
+          const price = priceAt(r.data.points, ts);
+          if (price == null) continue;
+          let value = shares * price;
+          if (baseCcy === 'KRW' && r.holding.market === 'US') {
+            if (fx == null) { abort = true; break; }
+            value = value * fx;
+          } else if (baseCcy === 'USD' && r.holding.market === 'KR') {
+            if (fx == null) { abort = true; break; }
+            value = value / fx;
+          }
+          total += value;
+          anyContribution = true;
+        }
+        if (!abort && anyContribution) points.push({ x: ts, y: total });
+      }
+      if (points.length === 0) throw new Error('Could not compute any data points');
+      state.valueHistoryCache[range] = { points, currency: baseCcy, fetchedAt: Date.now() };
+    } catch (e) {
+      state.valueHistoryCache[range] = { points: [], error: e.message || String(e) };
+    } finally {
+      state.valueHistoryLoading[range] = false;
+      render();
+    }
+  }
+
   async function fetchFx() {
     try {
       const r = await withTimeout(fetch('https://api.exchangerate-api.com/v4/latest/USD'), 8000);
@@ -1540,6 +1805,7 @@
       <button class="btn-ghost" data-act="update-prices" ${dis ? 'disabled' : ''}>
         ${state.updating ? I.spinner : I.refresh}${state.updating ? 'Updating…' : 'Auto Update'}
       </button>
+      <button class="btn-ghost" data-act="open-value-chart" ${empty ? 'disabled' : ''}>${I.trend} Value Chart</button>
       <span class="toolbar-divider"></span>
       ${filterBtns}
       <span class="toolbar-divider"></span>
@@ -1800,6 +2066,104 @@
     </th>`;
   }
 
+  function tplHoldingDetail(D) {
+    if (!state.selectedHoldingId) return '';
+    const h = state.holdings.find(x => x.id === state.selectedHoldingId);
+    if (!h) return '';
+    const item = D.items.find(it => it.h.id === h.id) || (function(){
+      // selected holding may be filtered out — recompute basics from scratch
+      const t = lotsTotals(h.lots);
+      return { h, shares: t.shares, avgCost: t.avgCost, cost: t.cost, hasPrice: h.currentPrice != null,
+               value: h.currentPrice != null ? t.shares * h.currentPrice : null,
+               pnl: h.currentPrice != null ? (t.shares * h.currentPrice) - t.cost : null,
+               pct: h.currentPrice != null && t.cost > 0 ? (((t.shares * h.currentPrice) - t.cost) / t.cost) * 100 : null,
+               cur: h.market === 'KR' ? 'KRW' : 'USD' };
+    })();
+    const range = state.detailRange || '1y';
+    const cacheKey = yahooSymbol(h) + '_' + range;
+    const cached = state.historyCache[cacheKey];
+    const loading = state.historyLoading[cacheKey];
+    const cur = item.cur;
+    const ranges = [['1mo','1M'],['3mo','3M'],['6mo','6M'],['1y','1Y'],['2y','2Y'],['5y','5Y']];
+    const rangeBtns = ranges.map(([v,l]) =>
+      `<button class="filter-btn ${range === v ? 'active' : ''}" data-act="set-detail-range" data-v="${v}">${l}</button>`
+    ).join('');
+
+    const fmtMoneyCcy = (n) => fmtMoney(n, cur);
+
+    let body;
+    if (loading) {
+      body = '<div class="chart-empty" style="padding: 40px 0;">Loading price history…</div>';
+    } else if (!cached) {
+      body = '<div class="chart-empty" style="padding: 40px 0;">Fetching…</div>';
+    } else if (cached.error) {
+      body = `<div class="chart-empty" style="color: var(--loss); padding: 40px 0;">Failed to load: ${escape(cached.error)}</div>`;
+    } else if (cached.points.length === 0) {
+      body = '<div class="chart-empty" style="padding: 40px 0;">No data for this range.</div>';
+    } else {
+      const earliest = cached.points[0].x;
+      // Buy markers (only lots within visible range)
+      const markers = (h.lots || [])
+        .map(l => ({ x: new Date(l.date).getTime(), y: l.price }))
+        .filter(m => m.x >= earliest && !isNaN(m.x));
+      // Stats
+      const first = cached.points[0];
+      const last = cached.points[cached.points.length - 1];
+      const change = last.y - first.y;
+      const changePct = first.y > 0 ? (change / first.y) * 100 : 0;
+      const changeColor = change >= 0 ? 'var(--gain)' : 'var(--loss)';
+
+      const priceChart = lineChartSVG(cached.points, {
+        width: 1100, height: 280,
+        refLine: item.avgCost,
+        refLabel: 'avg cost ' + fmtMoneyCcy(item.avgCost),
+        markers,
+        color: 'var(--info)',
+        formatY: fmtMoneyCcy,
+      });
+
+      // Profit-rate chart: (price - avgCost) / avgCost × 100
+      const ratePoints = item.avgCost > 0
+        ? cached.points.map(p => ({ x: p.x, y: ((p.y - item.avgCost) / item.avgCost) * 100 }))
+        : [];
+      const rateChart = ratePoints.length > 0
+        ? lineChartSVG(ratePoints, {
+            width: 1100, height: 200,
+            refLine: 0,
+            refLabel: 'break-even',
+            refColor: 'currentColor',
+            color: ratePoints[ratePoints.length - 1].y >= 0 ? 'var(--gain)' : 'var(--loss)',
+            formatY: v => v.toFixed(1) + '%',
+          })
+        : '';
+
+      const stats = `<div class="detail-stats">
+        <div class="detail-stat"><span class="detail-stat-label">Range start</span><span class="detail-stat-value">${escape(fmtMoneyCcy(first.y))}</span></div>
+        <div class="detail-stat"><span class="detail-stat-label">Range end</span><span class="detail-stat-value">${escape(fmtMoneyCcy(last.y))}</span></div>
+        <div class="detail-stat"><span class="detail-stat-label">Range change</span><span class="detail-stat-value" style="color: ${changeColor};">${change >= 0 ? '+' : '−'}${fmtMoneyCcy(Math.abs(change))} · ${fmtPct(changePct)}</span></div>
+        <div class="detail-stat"><span class="detail-stat-label">Avg cost</span><span class="detail-stat-value">${escape(fmtMoneyCcy(item.avgCost))} <span class="text-dim" style="font-size: 14px;">(${item.shares.toLocaleString()} sh, ${(h.lots || []).length} buy${(h.lots || []).length === 1 ? '' : 's'})</span></span></div>
+        <div class="detail-stat"><span class="detail-stat-label">Current return</span><span class="detail-stat-value" style="color: ${item.hasPrice && item.pnl >= 0 ? 'var(--gain)' : 'var(--loss)'};">${item.hasPrice ? fmtPct(item.pct) : '—'}</span></div>
+      </div>`;
+
+      body = `${stats}
+        <div class="detail-chart-label">Price · avg cost reference · buy markers</div>
+        <div class="detail-chart-wrap">${priceChart}</div>
+        ${rateChart ? `<div class="detail-chart-label">Profit rate vs avg cost</div><div class="detail-chart-wrap">${rateChart}</div>` : ''}`;
+    }
+
+    return `<section class="holdings-section detail-panel">
+      <div class="holdings-head">
+        ${I.bar}<h2 class="holdings-title">${escape(displayName(h))} <span style="opacity: 0.7; font-weight: normal;">${escape(h.ticker)} · ${h.market}</span></h2>
+        <span class="holdings-meta">price history</span>
+        <button class="icon-btn" data-act="close-detail" title="Close detail panel">${I.closeS}</button>
+      </div>
+      <div class="detail-body">
+        <div class="filter-seg" style="margin-bottom: 12px;">${rangeBtns}</div>
+        ${body}
+      </div>
+    </section>`;
+  }
+
   function tplHoldingsTable(D) {
     if (state.holdings.length === 0) {
       return `<section class="holdings-section">
@@ -1847,11 +2211,12 @@
       const showSub = h.name && h.name.trim() && h.name.trim() !== h.ticker;
 
       const lotBadge = it.lotCount > 1 ? `<span class="lot-count-badge" title="${it.lotCount} buy lots">${it.lotCount} buys</span>` : '';
-      return `<tr>
+      const isSelected = state.selectedHoldingId === h.id;
+      return `<tr class="${isSelected ? 'row-selected' : ''}">
         <td>
           <div class="ticker-cell">
             <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-              <span class="ticker-display" title="${escape(primary)}">${escape(primary)}</span>
+              <span class="ticker-display ticker-link" data-act="select-holding" data-id="${h.id}" title="View price history of ${escape(primary)}" tabindex="0" role="button">${escape(primary)}</span>
               <span class="market-tag ${h.market === 'KR' ? 'kr' : 'us'}">${h.market}</span>
             </div>
             ${showSub ? `<span class="ticker-sub" title="${escape(h.ticker)}">${escape(h.ticker)}</span>` : ''}
@@ -1932,7 +2297,66 @@
     if (!state.dialog) return '';
     if (state.dialog.mode === 'prices') return tplPriceDialog();
     if (state.dialog.mode === 'profiles') return tplProfileDialog();
+    if (state.dialog.mode === 'value-chart') return tplValueChartDialog();
     return tplHoldingDialog();
+  }
+
+  function tplValueChartDialog() {
+    const range = state.valueRange || '1y';
+    const cached = state.valueHistoryCache[range];
+    const loading = state.valueHistoryLoading[range];
+    const D = derive();
+    const baseCcy = D.baseCcy;
+    const fmt = baseCcy === 'KRW' ? fmtKRWcompact : fmtUSDcompact;
+    const ranges = [['3mo','3M'],['6mo','6M'],['1y','1Y'],['2y','2Y'],['5y','5Y'],['max','MAX']];
+    const rangeBtns = ranges.map(([v,l]) =>
+      `<button class="filter-btn ${range === v ? 'active' : ''}" data-act="set-value-range" data-v="${v}">${l}</button>`
+    ).join('');
+
+    let body;
+    if (loading) {
+      body = '<div class="chart-empty" style="padding: 60px 0;">Fetching ' + state.holdings.length + ' price history series…</div>';
+    } else if (!cached) {
+      body = '<div class="chart-empty" style="padding: 60px 0;">Loading…</div>';
+    } else if (cached.error) {
+      body = `<div class="chart-empty" style="color: var(--loss); padding: 60px 0;">Failed: ${escape(cached.error)}</div>`;
+    } else if (cached.points.length === 0) {
+      body = '<div class="chart-empty" style="padding: 60px 0;">No data points for this range.</div>';
+    } else {
+      const first = cached.points[0];
+      const last = cached.points[cached.points.length - 1];
+      const change = last.y - first.y;
+      const pct = first.y > 0 ? (change / first.y) * 100 : 0;
+      const color = change >= 0 ? 'var(--gain)' : 'var(--loss)';
+      const chart = lineChartSVG(cached.points, {
+        width: 900, height: 320,
+        formatY: fmt,
+        color: 'var(--info)',
+      });
+      body = `${chart}
+        <div class="detail-stats" style="margin-top: 14px;">
+          <div class="detail-stat"><span class="detail-stat-label">Range start</span><span class="detail-stat-value">${escape(fmt(first.y))}</span></div>
+          <div class="detail-stat"><span class="detail-stat-label">Range end</span><span class="detail-stat-value">${escape(fmt(last.y))}</span></div>
+          <div class="detail-stat"><span class="detail-stat-label">Range change</span><span class="detail-stat-value" style="color: ${color};">${change >= 0 ? '+' : '−'}${fmt(Math.abs(change))} · ${fmtPct(pct)}</span></div>
+        </div>
+        <div class="text-dim" style="font-size: 14px; margin-top: 10px; font-family: var(--sans);">
+          Each point sums (shares owned at that date × close price), converted to ${baseCcy} via historical USDKRW where needed.
+        </div>`;
+    }
+
+    return `<div class="modal-bg" data-act="modal-bg">
+      <div class="modal modal-wide" data-stop style="max-width: 1000px;">
+        <div class="modal-head">
+          <h3 class="modal-title">Total Value Over Time (${baseCcy})</h3>
+          <button class="icon-btn" data-act="close-dialog">${I.close}</button>
+        </div>
+        <p class="modal-sub">Historical portfolio value computed from each holding's daily close. Lots are accounted for from their purchase date forward.</p>
+        <div style="padding: 0 14px 16px;">
+          <div class="filter-seg" style="margin-bottom: 14px;">${rangeBtns}</div>
+          ${body}
+        </div>
+      </div>
+    </div>`;
   }
 
   function tplLotRow(l, market, canRemove) {
@@ -2096,6 +2520,7 @@
       tplError() +
       tplKPI(D) +
       tplCharts(D) +
+      tplHoldingDetail(D) +
       tplHoldingsTable(D) +
       tplDialog();
     if (topFields) {
@@ -2212,6 +2637,38 @@
         render();
       }
     }
+    else if (act === 'select-holding') {
+      const sid = btn.dataset.id;
+      if (state.selectedHoldingId === sid) {
+        state.selectedHoldingId = null;
+        render();
+      } else {
+        state.selectedHoldingId = sid;
+        const h = state.holdings.find(x => x.id === sid);
+        render();
+        if (h) ensureHoldingHistory(h, state.detailRange || '1y');
+      }
+    }
+    else if (act === 'close-detail') {
+      state.selectedHoldingId = null;
+      render();
+    }
+    else if (act === 'set-detail-range') {
+      state.detailRange = btn.dataset.v;
+      const h = state.holdings.find(x => x.id === state.selectedHoldingId);
+      render();
+      if (h) ensureHoldingHistory(h, state.detailRange);
+    }
+    else if (act === 'open-value-chart') {
+      state.dialog = { mode: 'value-chart' };
+      render();
+      ensureValueHistory(state.valueRange || '1y');
+    }
+    else if (act === 'set-value-range') {
+      state.valueRange = btn.dataset.v;
+      render();
+      ensureValueHistory(state.valueRange);
+    }
     else if (act === 'manage-profiles') { state.dialog = { mode: 'profiles' }; render(); }
     else if (act === 'quick-add-profile') {
       const name = prompt('New user name:');
@@ -2287,6 +2744,13 @@
       updateLotSummary();
     } else if (e.target && e.target.id === 'f-ticker') {
       scheduleTickerSearch(e.target.value);
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target && e.target.classList && e.target.classList.contains('ticker-link')) {
+      e.preventDefault();
+      e.target.click();
     }
   });
 
