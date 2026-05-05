@@ -221,6 +221,18 @@
   .seg-btn.active { background: var(--surface-2); color: var(--text); }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 
+  /* Lots (buy history) */
+  .lot-header { display: grid; grid-template-columns: 1fr 1fr 1fr 32px; gap: 8px; padding: 0 4px 4px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.04em; color: var(--muted); }
+  .lot-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .lot-row { display: grid; grid-template-columns: 1fr 1fr 1fr 32px; gap: 8px; align-items: center; }
+  .lot-row .input { padding: 8px 10px; font-size: 13px; }
+  .lot-add-btn { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; background: transparent; color: var(--muted); border: 1px dashed var(--border-hi); border-radius: 8px; padding: 9px 12px; font-size: 13px; font-weight: 500; cursor: pointer; }
+  .lot-add-btn:hover { color: var(--text); border-color: var(--accent-border); }
+  .lot-summary { font-family: var(--mono); font-size: 12px; color: var(--text); padding: 10px 12px; background: var(--hover); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+  .lot-summary-item { display: flex; gap: 6px; }
+  .lot-summary-label { color: var(--muted); }
+  .lot-count-badge { font-family: var(--mono); font-size: 9px; letter-spacing: 0.04em; color: var(--muted); padding: 1px 5px; border-radius: 3px; border: 1px solid var(--border-hi); margin-left: 6px; vertical-align: 1px; }
+
   /* Profile manager */
   .profile-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
   .profile-row { display: flex; gap: 8px; align-items: center; }
@@ -343,10 +355,75 @@
     theme: 'dark',
   };
 
-  // ---------- profile helpers ----------
+  // ---------- id helpers ----------
   function makeProfileId() {
     return 'p_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   }
+  function makeHoldingId() {
+    return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+  }
+  function makeLotId() {
+    return 'l_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+  }
+
+  // ---------- lot math ----------
+  // Aggregates a list of buy lots into total shares, total cost, and average cost.
+  function lotsTotals(lots) {
+    let shares = 0, cost = 0;
+    for (const l of (lots || [])) {
+      const s = Number(l.shares) || 0;
+      const p = Number(l.price) || 0;
+      if (s > 0 && p > 0) { shares += s; cost += s * p; }
+    }
+    return { shares, cost, avgCost: shares > 0 ? cost / shares : 0 };
+  }
+
+  // Convert any version of a holding payload (v1, v2 single-buy, v3 with lots) into the
+  // canonical v3 shape. Idempotent — safe to run on already-migrated data.
+  function migrateHolding(h) {
+    if (!h || typeof h !== 'object') return null;
+    const market = h.market === 'KR' || h.market === 'US' ? h.market : null;
+    if (!market) return null;
+    const ticker = typeof h.ticker === 'string' ? h.ticker.toUpperCase() : null;
+    if (!ticker) return null;
+
+    let lots;
+    if (Array.isArray(h.lots) && h.lots.length > 0) {
+      lots = h.lots
+        .filter(l => Number(l.shares) > 0 && Number(l.price) > 0)
+        .map(l => ({
+          id: l.id || makeLotId(),
+          shares: Number(l.shares),
+          price: Number(l.price),
+          date: l.date || new Date().toISOString().slice(0, 10),
+        }));
+    } else if (Number(h.shares) > 0 && Number(h.buyPrice) > 0) {
+      lots = [{
+        id: makeLotId(),
+        shares: Number(h.shares),
+        price: Number(h.buyPrice),
+        date: h.buyDate || new Date().toISOString().slice(0, 10),
+      }];
+    } else {
+      return null;
+    }
+    if (lots.length === 0) return null;
+
+    return {
+      id: h.id || makeHoldingId(),
+      ticker,
+      name: h.name || '',
+      market,
+      category: h.category || '',
+      lots,
+      currentPrice: typeof h.currentPrice === 'number' ? h.currentPrice : null,
+      currency: h.currency || (market === 'KR' ? 'KRW' : 'USD'),
+      lastPriceAt: h.lastPriceAt || null,
+    };
+  }
+  function isValidHolding(h) { return migrateHolding(h) !== null; }
+
+  // ---------- profile helpers ----------
   function newProfile(name) {
     return { id: makeProfileId(), name: name || 'Default', holdings: [], fxRate: null, lastUpdated: null };
   }
@@ -388,7 +465,7 @@
           state.profiles = d.profiles.map(p => ({
             id: p.id || makeProfileId(),
             name: p.name || 'Profile',
-            holdings: Array.isArray(p.holdings) ? p.holdings : [],
+            holdings: (Array.isArray(p.holdings) ? p.holdings : []).map(migrateHolding).filter(Boolean),
             fxRate: typeof p.fxRate === 'number' ? p.fxRate : null,
             lastUpdated: p.lastUpdated || null,
           }));
@@ -403,7 +480,7 @@
       if (rawV1) {
         const d1 = JSON.parse(rawV1);
         const p = newProfile('Default');
-        p.holdings = Array.isArray(d1.holdings) ? d1.holdings : [];
+        p.holdings = (Array.isArray(d1.holdings) ? d1.holdings : []).map(migrateHolding).filter(Boolean);
         p.fxRate = typeof d1.fxRate === 'number' ? d1.fxRate : null;
         p.lastUpdated = d1.lastUpdated || null;
         state.profiles = [p];
@@ -526,27 +603,6 @@
     }
   }
 
-  function normalizeHolding(h) {
-    return {
-      id: h.id || (Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
-      ticker: String(h.ticker).toUpperCase(),
-      name: h.name || '',
-      market: h.market,
-      shares: Number(h.shares),
-      buyPrice: Number(h.buyPrice),
-      buyDate: h.buyDate || new Date().toISOString().slice(0, 10),
-      category: h.category || '',
-      currentPrice: typeof h.currentPrice === 'number' ? h.currentPrice : null,
-      currency: h.currency || (h.market === 'KR' ? 'KRW' : 'USD'),
-      lastPriceAt: h.lastPriceAt || null,
-    };
-  }
-  function isValidHolding(h) {
-    return h && typeof h === 'object' && typeof h.ticker === 'string'
-      && (h.market === 'KR' || h.market === 'US')
-      && Number(h.shares) > 0 && Number(h.buyPrice) > 0;
-  }
-
   function importJSON(file) {
     if (!file) return;
     const reader = new FileReader();
@@ -558,7 +614,7 @@
           const profiles = d.profiles.map(p => ({
             id: p.id || makeProfileId(),
             name: p.name || 'Profile',
-            holdings: (Array.isArray(p.holdings) ? p.holdings : []).filter(isValidHolding).map(normalizeHolding),
+            holdings: (Array.isArray(p.holdings) ? p.holdings : []).map(migrateHolding).filter(Boolean),
             fxRate: typeof p.fxRate === 'number' ? p.fxRate : null,
             lastUpdated: p.lastUpdated || null,
           })).filter(p => p.id);
@@ -579,7 +635,7 @@
           setTimeout(() => { if (state.info) { state.info = null; render(); } }, 2500);
         } else if (Array.isArray(d.holdings)) {
           // v1 format — import as a new profile
-          const valid = d.holdings.filter(isValidHolding).map(normalizeHolding);
+          const valid = d.holdings.map(migrateHolding).filter(Boolean);
           if (valid.length === 0) throw new Error('No valid holdings in file');
           const baseName = 'Imported';
           let name = baseName;
@@ -617,10 +673,25 @@
       state.holdings = state.holdings.map(h => h.id === editId ? { ...h, ...data } : h);
     } else {
       state.holdings = [...state.holdings, {
-        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-        ...data, currentPrice: null, lastPriceAt: null,
+        id: makeHoldingId(),
+        ticker: data.ticker,
+        name: data.name,
+        market: data.market,
+        category: data.category,
+        lots: data.lots,
+        currentPrice: null,
+        currency: data.market === 'KR' ? 'KRW' : 'USD',
+        lastPriceAt: null,
       }];
     }
+    state.dialog = null;
+    save();
+  }
+
+  function appendLotsToHolding(holdingId, newLots) {
+    state.holdings = state.holdings.map(h => h.id === holdingId
+      ? { ...h, lots: [...h.lots, ...newLots.map(l => ({ ...l, id: l.id || makeLotId() }))] }
+      : h);
     state.dialog = null;
     save();
   }
@@ -770,16 +841,20 @@
     };
 
     const items = holdings.map(h => {
-      const cost = h.shares * h.buyPrice;
+      const t = lotsTotals(h.lots);
+      const shares = t.shares;
+      const cost = t.cost;
+      const avgCost = t.avgCost;
+      const lotCount = (h.lots || []).length;
       const hasPrice = h.currentPrice != null;
-      const value = hasPrice ? h.shares * h.currentPrice : null;
+      const value = hasPrice ? shares * h.currentPrice : null;
       const pnl = hasPrice ? value - cost : null;
-      const pct = hasPrice ? (pnl / cost) * 100 : null;
+      const pct = hasPrice && cost > 0 ? (pnl / cost) * 100 : null;
       const cur = h.market === 'KR' ? 'KRW' : 'USD';
       const costBase = toBase(cost, h.market);
       const valueBase = hasPrice ? toBase(value, h.market) : costBase;
       const pnlBase = hasPrice ? valueBase - costBase : 0;
-      return { h, cost, hasPrice, value, pnl, pct, cur, costBase, valueBase, pnlBase };
+      return { h, shares, avgCost, lotCount, cost, hasPrice, value, pnl, pct, cur, costBase, valueBase, pnlBase };
     });
 
     const tCost = items.reduce((s, it) => s + it.costBase, 0);
@@ -1127,8 +1202,8 @@
     name: it => displayName(it.h).toLowerCase(),
     market: it => it.h.market,
     category: it => (it.h.category || '').trim() || UNCATEGORIZED,
-    shares: it => it.h.shares,
-    buyPrice: it => it.h.buyPrice,
+    shares: it => it.shares,
+    avgCost: it => it.avgCost,
     currentPrice: it => it.h.currentPrice ?? -Infinity,
     value: it => it.valueBase,
     pnl: it => it.hasPrice ? it.pnlBase : -Infinity,
@@ -1180,6 +1255,7 @@
       const primary = displayName(h);
       const showSub = h.name && h.name.trim() && h.name.trim() !== h.ticker;
 
+      const lotBadge = it.lotCount > 1 ? `<span class="lot-count-badge" title="${it.lotCount} buy lots">${it.lotCount} buys</span>` : '';
       return `<tr>
         <td>
           <div class="ticker-cell">
@@ -1193,8 +1269,8 @@
         <td>
           ${cat ? `<span class="cat-tag" style="color: ${catColor}; border-color: ${catColor}55; background: ${catColor}12;">${escape(cat)}</span>` : '<span class="text-dim">—</span>'}
         </td>
-        <td class="num">${h.shares.toLocaleString()}</td>
-        <td class="num">${fmtMoney(h.buyPrice, it.cur)}</td>
+        <td class="num">${it.shares.toLocaleString()}</td>
+        <td class="num">${fmtMoney(it.avgCost, it.cur)}${lotBadge}</td>
         <td class="num">${it.hasPrice ? fmtMoney(h.currentPrice, it.cur) : '<span class="text-dim">—</span>'}</td>
         <td class="num-strong">${it.hasPrice ? fmtMoney(it.value, it.cur) : fmtMoney(it.cost, it.cur)}</td>
         <td class="num-strong" style="color: ${pnlColor};">
@@ -1209,6 +1285,7 @@
         </td>
         <td>
           <div style="display: flex; gap: 2px; justify-content: flex-end;">
+            <button class="icon-btn" data-act="add-buy" data-id="${h.id}" aria-label="Add buy" title="Add another buy">${I.plus}</button>
             <button class="icon-btn" data-act="edit" data-id="${h.id}" aria-label="Edit">${I.pencil}</button>
             <button class="icon-btn" data-act="delete" data-id="${h.id}" aria-label="Delete">${I.trash}</button>
           </div>
@@ -1228,7 +1305,7 @@
               ${thSort('name', 'Name')}
               ${thSort('category', 'Category')}
               ${thSort('shares', 'Shares', { right: true })}
-              ${thSort('buyPrice', 'Cost', { right: true })}
+              ${thSort('avgCost', 'Avg Cost', { right: true })}
               ${thSort('currentPrice', 'Price', { right: true })}
               ${thSort('value', 'Value', { right: true })}
               ${thSort('pnl', 'P/L', { right: true })}
@@ -1260,14 +1337,33 @@
     if (!state.dialog) return '';
     if (state.dialog.mode === 'prices') return tplPriceDialog();
     if (state.dialog.mode === 'profiles') return tplProfileDialog();
+    return tplHoldingDialog();
+  }
+
+  function tplLotRow(l, market, canRemove) {
+    const cur = market === 'KR' ? 'KRW' : 'USD';
+    const today = new Date().toISOString().slice(0, 10);
+    return `<div class="lot-row" data-lot-row="${l.id}">
+      <input class="input" data-lot-field="shares" type="number" step="any" placeholder="100" value="${l.shares ?? ''}">
+      <input class="input" data-lot-field="price" type="number" step="any" placeholder="${market === 'KR' ? '70000' : '150.00'}" value="${l.price ?? ''}">
+      <input class="input" data-lot-field="date" type="date" value="${l.date || today}">
+      <button class="icon-btn" data-act="remove-lot" data-lot-id="${l.id}" ${canRemove ? '' : 'disabled style="opacity: 0.3; cursor: not-allowed;"'} aria-label="Remove">${I.trash}</button>
+    </div>`;
+  }
+
+  function tplHoldingDialog() {
     const isEdit = state.dialog.mode === 'edit';
     const h = state.dialog.holding || {};
     const market = state.dialog.market || h.market || 'KR';
+    const cur = market === 'KR' ? 'KRW' : 'USD';
     const existingCats = [...new Set(state.holdings.map(x => (x.category || '').trim()).filter(Boolean))];
     const allCats = [...new Set([...existingCats, ...SUGGESTED])];
+    const lots = state.dialog.lots || [];
+    const canRemove = lots.length > 1;
+    const t = lotsTotals(lots);
 
     return `<div class="modal-bg" data-act="modal-bg">
-      <div class="modal" data-stop>
+      <div class="modal modal-wide" data-stop>
         <div class="modal-head">
           <h3 class="modal-title">${isEdit ? 'Edit Holding' : 'Add Holding'}</h3>
           <button class="icon-btn" data-act="close-dialog">${I.close}</button>
@@ -1275,38 +1371,44 @@
         <div class="field">
           <label class="lbl">Market</label>
           <div class="seg-group">
-            <button class="seg-btn ${market === 'KR' ? 'active' : ''}" data-act="set-market" data-v="KR">Korea (KR)</button>
-            <button class="seg-btn ${market === 'US' ? 'active' : ''}" data-act="set-market" data-v="US">United States</button>
+            <button class="seg-btn ${market === 'KR' ? 'active' : ''}" data-act="set-market" data-v="KR" ${isEdit ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>Korea (KR)</button>
+            <button class="seg-btn ${market === 'US' ? 'active' : ''}" data-act="set-market" data-v="US" ${isEdit ? 'disabled style="opacity: 0.5; cursor: not-allowed;"' : ''}>United States</button>
           </div>
         </div>
-        <div class="field">
-          <label class="lbl">Ticker ${market === 'KR' ? '(e.g. 005930)' : '(e.g. AAPL)'}</label>
-          <input class="input" id="f-ticker" value="${escape(h.ticker || '')}" placeholder="${market === 'KR' ? '005930' : 'AAPL'}">
-        </div>
-        <div class="field">
-          <label class="lbl">Name (optional)</label>
-          <input class="input" id="f-name" value="${escape(h.name || '')}" placeholder="${market === 'KR' ? 'Samsung Electronics' : 'Apple Inc.'}" style="font-family: var(--sans);">
+        <div class="field grid-2">
+          <div>
+            <label class="lbl">Ticker ${market === 'KR' ? '(e.g. 005930)' : '(e.g. AAPL)'}</label>
+            <input class="input" id="f-ticker" value="${escape(h.ticker || '')}" placeholder="${market === 'KR' ? '005930' : 'AAPL'}">
+          </div>
+          <div>
+            <label class="lbl">Name (optional)</label>
+            <input class="input" id="f-name" value="${escape(h.name || '')}" placeholder="${market === 'KR' ? 'Samsung Electronics' : 'Apple Inc.'}" style="font-family: var(--sans);">
+          </div>
         </div>
         <div class="field">
           <label class="lbl">Category (optional)</label>
           <input class="input" id="f-category" value="${escape(h.category || '')}" placeholder="e.g. Tech, Semiconductors, Dividend…" list="cat-list" style="font-family: var(--sans);">
           <datalist id="cat-list">${allCats.map(c => `<option value="${escape(c)}">`).join('')}</datalist>
         </div>
-        <div class="field grid-2">
-          <div>
-            <label class="lbl">Shares</label>
-            <input class="input" id="f-shares" type="number" step="any" value="${h.shares ?? ''}" placeholder="100">
-          </div>
-          <div>
-            <label class="lbl">Cost per share (${market === 'KR' ? 'KRW' : 'USD'})</label>
-            <input class="input" id="f-buyprice" type="number" step="any" value="${h.buyPrice ?? ''}" placeholder="${market === 'KR' ? '70000' : '150.00'}">
-          </div>
-        </div>
         <div class="field">
-          <label class="lbl">Purchase date</label>
-          <input class="input" id="f-buydate" type="date" value="${h.buyDate || new Date().toISOString().slice(0, 10)}">
+          <label class="lbl">Buy History · ${cur}</label>
+          <div class="lot-header">
+            <span>Shares</span>
+            <span>Price</span>
+            <span>Date</span>
+            <span></span>
+          </div>
+          <div class="lot-list">
+            ${lots.map(l => tplLotRow(l, market, canRemove)).join('')}
+          </div>
+          <button class="lot-add-btn" data-act="add-lot">${I.plus} Add Buy</button>
         </div>
-        <div style="display: flex; gap: 10px; margin-top: 8px;">
+        <div class="lot-summary" id="lot-summary">
+          <div class="lot-summary-item"><span class="lot-summary-label">Total shares</span><span>${t.shares.toLocaleString()}</span></div>
+          <div class="lot-summary-item"><span class="lot-summary-label">Avg cost</span><span>${fmtMoney(t.avgCost, cur)}</span></div>
+          <div class="lot-summary-item"><span class="lot-summary-label">Total cost</span><span>${fmtMoney(t.cost, cur)}</span></div>
+        </div>
+        <div style="display: flex; gap: 10px;">
           <button class="btn-ghost" data-act="close-dialog" style="flex: 1;">Cancel</button>
           <button class="btn-primary" data-act="submit-dialog" style="flex: 1;">${isEdit ? 'Save' : 'Add'}</button>
         </div>
@@ -1379,7 +1481,18 @@
   // ---------- render & events ----------
   function render() {
     const root = document.getElementById('app');
-    const formValues = state.dialog && state.dialog.mode !== 'prices' && state.dialog.mode !== 'profiles' ? readForm() : null;
+    const isHoldingDialog = state.dialog && (state.dialog.mode === 'add' || state.dialog.mode === 'edit');
+    let topFields = null;
+    if (isHoldingDialog) {
+      // Capture in-progress edits before re-render so they survive add-lot / remove-lot.
+      topFields = {
+        ticker: document.getElementById('f-ticker')?.value,
+        name: document.getElementById('f-name')?.value,
+        category: document.getElementById('f-category')?.value,
+      };
+      const liveLots = readLotsFromDOM();
+      if (liveLots.length > 0) state.dialog.lots = liveLots;
+    }
     const D = derive();
     root.innerHTML =
       tplHeader() +
@@ -1389,7 +1502,24 @@
       tplCharts(D) +
       tplHoldingsTable(D) +
       tplDialog();
-    if (formValues) writeForm(formValues);
+    if (topFields) {
+      const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
+      set('f-ticker', topFields.ticker);
+      set('f-name', topFields.name);
+      set('f-category', topFields.category);
+    }
+  }
+
+  function readLotsFromDOM() {
+    const lots = [];
+    document.querySelectorAll('[data-lot-row]').forEach(row => {
+      const id = row.getAttribute('data-lot-row');
+      const shares = row.querySelector('[data-lot-field="shares"]')?.value;
+      const price = row.querySelector('[data-lot-field="price"]')?.value;
+      const date = row.querySelector('[data-lot-field="date"]')?.value;
+      lots.push({ id, shares, price, date });
+    });
+    return lots;
   }
 
   function readForm() {
@@ -1398,20 +1528,21 @@
       ticker: get('f-ticker')?.value,
       name: get('f-name')?.value,
       category: get('f-category')?.value,
-      shares: get('f-shares')?.value,
-      buyPrice: get('f-buyprice')?.value,
-      buyDate: get('f-buydate')?.value,
+      lots: readLotsFromDOM(),
     };
   }
 
-  function writeForm(v) {
-    const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
-    set('f-ticker', v.ticker);
-    set('f-name', v.name);
-    set('f-category', v.category);
-    set('f-shares', v.shares);
-    set('f-buyprice', v.buyPrice);
-    set('f-buydate', v.buyDate);
+  // Recompute the lot summary footer from current DOM values, without a full re-render.
+  function updateLotSummary() {
+    const summary = document.getElementById('lot-summary');
+    if (!summary || !state.dialog) return;
+    const market = state.dialog.market || state.dialog.holding?.market || 'KR';
+    const cur = market === 'KR' ? 'KRW' : 'USD';
+    const t = lotsTotals(readLotsFromDOM().map(l => ({ shares: parseFloat(l.shares) || 0, price: parseFloat(l.price) || 0 })));
+    summary.innerHTML =
+      `<div class="lot-summary-item"><span class="lot-summary-label">Total shares</span><span>${t.shares.toLocaleString()}</span></div>` +
+      `<div class="lot-summary-item"><span class="lot-summary-label">Avg cost</span><span>${fmtMoney(t.avgCost, cur)}</span></div>` +
+      `<div class="lot-summary-item"><span class="lot-summary-label">Total cost</span><span>${fmtMoney(t.cost, cur)}</span></div>`;
   }
 
   function commitProfileNames() {
@@ -1426,12 +1557,47 @@
     if (!btn) return;
     const act = btn.dataset.act;
     const id = btn.dataset.id;
-    if (act === 'open-add') { state.dialog = { mode: 'add' }; render(); }
+    if (act === 'open-add') {
+      state.dialog = { mode: 'add', market: 'KR', lots: [{ id: makeLotId(), shares: '', price: '', date: new Date().toISOString().slice(0, 10) }] };
+      render();
+    }
     else if (act === 'open-prices') { state.dialog = { mode: 'prices' }; render(); }
     else if (act === 'submit-prices') { submitPrices(); }
     else if (act === 'edit') {
       const h = state.holdings.find(x => x.id === id);
-      if (h) { state.dialog = { mode: 'edit', holding: h }; render(); }
+      if (h) {
+        state.dialog = { mode: 'edit', holding: h, market: h.market, lots: h.lots.map(l => ({ ...l })) };
+        render();
+      }
+    }
+    else if (act === 'add-buy') {
+      const h = state.holdings.find(x => x.id === id);
+      if (h) {
+        const lots = [...h.lots.map(l => ({ ...l })), { id: makeLotId(), shares: '', price: '', date: new Date().toISOString().slice(0, 10) }];
+        state.dialog = { mode: 'edit', holding: h, market: h.market, lots };
+        render();
+        // Focus the new shares input
+        setTimeout(() => {
+          const rows = document.querySelectorAll('[data-lot-row]');
+          const last = rows[rows.length - 1];
+          last?.querySelector('[data-lot-field="shares"]')?.focus();
+        }, 30);
+      }
+    }
+    else if (act === 'add-lot') {
+      if (state.dialog) {
+        state.dialog.lots = [...readLotsFromDOM(), { id: makeLotId(), shares: '', price: '', date: new Date().toISOString().slice(0, 10) }];
+        render();
+      }
+    }
+    else if (act === 'remove-lot') {
+      if (state.dialog) {
+        const lotId = btn.dataset.lotId;
+        const live = readLotsFromDOM().filter(l => l.id !== lotId);
+        if (live.length === 0) return; // Don't allow removing the last lot
+        state.dialog.lots = live;
+        render();
+      }
     }
     else if (act === 'delete') { remove(id); }
     else if (act === 'update-prices') { updatePrices(); }
@@ -1465,10 +1631,8 @@
       state.dialog = null; render();
     }
     else if (act === 'set-market') {
-      const v = readForm();
       state.dialog = { ...state.dialog, market: btn.dataset.v };
       render();
-      writeForm(v);
     }
     else if (act === 'submit-dialog') { submitForm(); }
     else if (act === 'dismiss-error') { state.error = null; render(); }
@@ -1495,22 +1659,55 @@
     }
   });
 
+  document.addEventListener('input', (e) => {
+    if (e.target && e.target.matches('[data-lot-field]')) {
+      updateLotSummary();
+    }
+  });
+
   function submitForm() {
     const v = readForm();
+    const editId = state.dialog.holding?.id;
     const market = state.dialog.market || state.dialog.holding?.market || 'KR';
     const ticker = (v.ticker || '').trim().toUpperCase();
-    const shares = Number(v.shares);
-    const buyPrice = Number(v.buyPrice);
-    if (!ticker || !(shares > 0) || !(buyPrice > 0)) {
-      state.error = 'Ticker, shares, and cost per share are all required.';
+    if (!ticker) { state.error = 'Ticker is required.'; render(); return; }
+    const validLots = v.lots
+      .map(l => ({
+        id: l.id || makeLotId(),
+        shares: Number(l.shares),
+        price: Number(l.price),
+        date: l.date || new Date().toISOString().slice(0, 10),
+      }))
+      .filter(l => l.shares > 0 && l.price > 0);
+    if (validLots.length === 0) {
+      state.error = 'Add at least one buy with shares and price greater than zero.';
       render(); return;
     }
+
+    // When adding a new holding for a ticker that already exists in the same market,
+    // offer to append the lots to the existing position instead of creating a duplicate.
+    if (!editId) {
+      const existing = state.holdings.find(h => h.ticker === ticker && h.market === market);
+      if (existing) {
+        const ok = confirm(
+          `${ticker} (${existing.name || existing.ticker}) already exists with ${existing.lots.length} buy(s).\n` +
+          `Add these ${validLots.length} buy(s) to the existing holding?\n\n` +
+          `Click Cancel to create a separate holding instead.`
+        );
+        if (ok) {
+          appendLotsToHolding(existing.id, validLots);
+          return;
+        }
+      }
+    }
+
     addOrUpdate({
-      ticker, name: (v.name || '').trim(), market,
-      shares, buyPrice,
-      buyDate: v.buyDate || new Date().toISOString().slice(0, 10),
+      ticker,
+      name: (v.name || '').trim(),
+      market,
       category: (v.category || '').trim(),
-    }, state.dialog.holding?.id);
+      lots: validLots,
+    }, editId);
   }
 
   // ---------- init ----------
