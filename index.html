@@ -1173,27 +1173,41 @@
 
   // ---------- ticker auto-search ----------
   // Yahoo Finance security search via the same CORS proxy chain.
+  // Returns { results, error }. error is non-null when every proxy + host
+  // combination failed, so the UI can distinguish "no matches" from "search down".
   async function searchSecurity(query) {
-    if (!query) return [];
-    const url = 'https://query1.finance.yahoo.com/v1/finance/search?q=' + encodeURIComponent(query) + '&quotesCount=8&newsCount=0';
-    for (let i = 0; i < PROXIES.length; i++) {
-      try {
-        const proxiedUrl = PROXIES[i](url);
-        const r = await withTimeout(fetch(proxiedUrl), 6000);
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const data = await r.json();
-        const allowedTypes = new Set(['EQUITY', 'ETF', 'MUTUALFUND', 'INDEX', 'CURRENCY']);
-        return (data?.quotes || [])
-          .filter(q => q.symbol && allowedTypes.has(q.quoteType))
-          .map(q => ({
-            symbol: q.symbol,
-            name: q.shortname || q.longname || q.symbol,
-            exchange: q.exchDisp || q.exchange || '',
-            type: q.typeDisp || q.quoteType || '',
-          }));
-      } catch (_) { /* try next proxy */ }
+    if (!query) return { results: [], error: null };
+    const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+    const path = '/v1/finance/search?q=' + encodeURIComponent(query) + '&quotesCount=10&newsCount=0&lang=en-US&region=US';
+    let lastErr = null;
+    for (const host of hosts) {
+      const url = 'https://' + host + path;
+      for (let i = 0; i < PROXIES.length; i++) {
+        try {
+          const proxiedUrl = PROXIES[i](url);
+          const r = await withTimeout(fetch(proxiedUrl), 6000);
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const text = await r.text();
+          if (!text || text[0] !== '{') throw new Error('Non-JSON response');
+          const data = JSON.parse(text);
+          const quotes = (data?.quotes || []).filter(q => q && q.symbol);
+          console.log('[search] "' + query + '" via ' + host + ' / proxy ' + (i + 1) + ' → ' + quotes.length + ' result(s)');
+          return {
+            results: quotes.map(q => ({
+              symbol: q.symbol,
+              name: q.shortname || q.longname || q.symbol,
+              exchange: q.exchDisp || q.exchange || '',
+              type: q.typeDisp || q.quoteType || '',
+            })),
+            error: null,
+          };
+        } catch (e) {
+          console.warn('[search] ' + host + ' proxy ' + (i + 1) + ' failed:', e.message);
+          lastErr = e;
+        }
+      }
     }
-    return [];
+    return { results: [], error: lastErr ? lastErr.message : 'All proxies failed' };
   }
 
   function detectMarket(symbol) {
@@ -1223,14 +1237,16 @@
 
   async function runTickerSearch(q) {
     const v = ++_searchVersion;
-    const results = await searchSecurity(q);
+    const { results, error } = await searchSecurity(q);
     if (v !== _searchVersion) return;
     const box = document.getElementById('ticker-search');
     if (!box) return;
     const live = document.getElementById('f-ticker');
     if (!live || live.value.trim() !== q) return;
     if (results.length === 0) {
-      box.innerHTML = '<div class="search-empty">No matches</div>';
+      box.innerHTML = error
+        ? `<div class="search-empty" style="color: var(--loss);">Search unavailable (${escape(error)}). You can still type the ticker manually.</div>`
+        : '<div class="search-empty">No matches</div>';
       box.classList.add('open');
       return;
     }
