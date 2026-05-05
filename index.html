@@ -513,6 +513,37 @@
   }
   .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 
+  /* Ticker auto-search dropdown */
+  .search-field { position: relative; }
+  .search-results {
+    position: absolute;
+    top: calc(100% + 2px);
+    left: 0;
+    min-width: 100%;
+    width: max-content;
+    max-width: 480px;
+    background: var(--surface-2);
+    border: 2px solid;
+    border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
+    box-shadow: 3px 3px 0 rgba(0,0,0,0.35);
+    z-index: 20;
+    max-height: 240px;
+    overflow-y: auto;
+    display: none;
+  }
+  .search-results.open { display: block; }
+  .search-result { padding: 6px 10px; cursor: pointer; border-bottom: 1px dotted var(--bevel-dark); font-family: var(--sans); display: flex; flex-direction: column; gap: 1px; }
+  .search-result:last-child { border-bottom: none; }
+  .search-result:hover, .search-result.active { background: var(--accent-bg); }
+  .search-result-row { display: flex; align-items: center; gap: 8px; }
+  .search-result-symbol { font-family: var(--mono); font-weight: bold; font-size: 19px; color: var(--accent); }
+  .search-result-mkt { font-family: var(--mono); font-size: 14px; padding: 0 5px; border: 1px solid var(--bevel-darker); color: #ffffff; text-shadow: 1px 1px 0 rgba(0,0,0,0.4); }
+  .search-result-mkt.kr { background: #e8b14d; color: #2a2520; text-shadow: none; }
+  .search-result-mkt.us { background: #5a8794; }
+  .search-result-exchange { font-family: var(--mono); font-size: 14px; color: var(--muted); margin-left: auto; }
+  .search-result-name { font-size: 16px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 460px; }
+  .search-loading, .search-empty { padding: 8px 10px; color: var(--muted); font-size: 17px; font-family: var(--sans); }
+
   /* Modal action button rows (inline-styled flex containers in templates) */
   .modal > div[style*="display: flex"] { padding: 0 14px; margin-top: 12px !important; }
 
@@ -1138,6 +1169,88 @@
       }
     }
     throw lastErr || new Error('All proxies failed');
+  }
+
+  // ---------- ticker auto-search ----------
+  // Yahoo Finance security search via the same CORS proxy chain.
+  async function searchSecurity(query) {
+    if (!query) return [];
+    const url = 'https://query1.finance.yahoo.com/v1/finance/search?q=' + encodeURIComponent(query) + '&quotesCount=8&newsCount=0';
+    for (let i = 0; i < PROXIES.length; i++) {
+      try {
+        const proxiedUrl = PROXIES[i](url);
+        const r = await withTimeout(fetch(proxiedUrl), 6000);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const data = await r.json();
+        const allowedTypes = new Set(['EQUITY', 'ETF', 'MUTUALFUND', 'INDEX', 'CURRENCY']);
+        return (data?.quotes || [])
+          .filter(q => q.symbol && allowedTypes.has(q.quoteType))
+          .map(q => ({
+            symbol: q.symbol,
+            name: q.shortname || q.longname || q.symbol,
+            exchange: q.exchDisp || q.exchange || '',
+            type: q.typeDisp || q.quoteType || '',
+          }));
+      } catch (_) { /* try next proxy */ }
+    }
+    return [];
+  }
+
+  function detectMarket(symbol) {
+    const s = (symbol || '').toUpperCase();
+    if (/\.(KS|KQ|KX)$/.test(s)) return 'KR';
+    if (/^\d{6}$/.test(s)) return 'KR';
+    return 'US';
+  }
+  function cleanSymbol(symbol) {
+    return (symbol || '').replace(/\.(KS|KQ|KX)$/i, '');
+  }
+
+  let _searchTimer = null;
+  let _searchVersion = 0;
+  const SEARCH_DEBOUNCE_MS = 300;
+
+  function scheduleTickerSearch(query) {
+    if (_searchTimer) clearTimeout(_searchTimer);
+    const q = (query || '').trim();
+    const box = document.getElementById('ticker-search');
+    if (!box) return;
+    if (!q) { box.innerHTML = ''; box.classList.remove('open'); return; }
+    box.innerHTML = '<div class="search-loading">Searching…</div>';
+    box.classList.add('open');
+    _searchTimer = setTimeout(() => runTickerSearch(q), SEARCH_DEBOUNCE_MS);
+  }
+
+  async function runTickerSearch(q) {
+    const v = ++_searchVersion;
+    const results = await searchSecurity(q);
+    if (v !== _searchVersion) return;
+    const box = document.getElementById('ticker-search');
+    if (!box) return;
+    const live = document.getElementById('f-ticker');
+    if (!live || live.value.trim() !== q) return;
+    if (results.length === 0) {
+      box.innerHTML = '<div class="search-empty">No matches</div>';
+      box.classList.add('open');
+      return;
+    }
+    box.innerHTML = results.map(r => {
+      const market = detectMarket(r.symbol);
+      return `<div class="search-result" data-act="pick-ticker" data-symbol="${escape(r.symbol)}" data-name="${escape(r.name)}" data-market="${market}">
+        <div class="search-result-row">
+          <span class="search-result-symbol">${escape(cleanSymbol(r.symbol))}</span>
+          <span class="search-result-mkt ${market === 'KR' ? 'kr' : 'us'}">${market}</span>
+          <span class="search-result-exchange">${escape(r.exchange)}${r.type ? ' · ' + escape(r.type) : ''}</span>
+        </div>
+        <div class="search-result-name">${escape(r.name)}</div>
+      </div>`;
+    }).join('');
+    box.classList.add('open');
+  }
+
+  function closeTickerSearch() {
+    const box = document.getElementById('ticker-search');
+    if (box) { box.classList.remove('open'); box.innerHTML = ''; }
   }
 
   async function fetchFx() {
@@ -1776,9 +1889,10 @@
           </div>
         </div>
         <div class="field grid-2">
-          <div>
+          <div class="search-field">
             <label class="lbl">Ticker ${market === 'KR' ? '(e.g. 005930)' : '(e.g. AAPL)'}</label>
-            <input class="input" id="f-ticker" value="${escape(h.ticker || '')}" placeholder="${market === 'KR' ? '005930' : 'AAPL'}">
+            <input class="input" id="f-ticker" value="${escape(h.ticker || '')}" placeholder="${market === 'KR' ? '005930 or company name' : 'AAPL or company name'}" autocomplete="off">
+            <div class="search-results" id="ticker-search"></div>
           </div>
           <div>
             <label class="lbl">Name (optional)</label>
@@ -2039,6 +2153,21 @@
       state.dialog = { ...state.dialog, market: btn.dataset.v };
       render();
     }
+    else if (act === 'pick-ticker') {
+      const symbol = btn.dataset.symbol || '';
+      const name = btn.dataset.name || '';
+      const market = btn.dataset.market || 'KR';
+      const tickerInput = document.getElementById('f-ticker');
+      const nameInput = document.getElementById('f-name');
+      if (tickerInput) tickerInput.value = cleanSymbol(symbol);
+      if (nameInput && !nameInput.value.trim()) nameInput.value = name;
+      closeTickerSearch();
+      // If market differs, switch and re-render (render preserves typed values).
+      if (state.dialog && state.dialog.market !== market) {
+        state.dialog.market = market;
+        render();
+      }
+    }
     else if (act === 'submit-dialog') { submitForm(); }
     else if (act === 'dismiss-error') { state.error = null; render(); }
     else if (act === 'dismiss-info') { state.info = null; render(); }
@@ -2067,7 +2196,15 @@
   document.addEventListener('input', (e) => {
     if (e.target && e.target.matches('[data-lot-field]')) {
       updateLotSummary();
+    } else if (e.target && e.target.id === 'f-ticker') {
+      scheduleTickerSearch(e.target.value);
     }
+  });
+
+  // Hide ticker search when focus leaves both the input and the results panel.
+  document.addEventListener('mousedown', (e) => {
+    const inField = e.target.closest('.search-field');
+    if (!inField) closeTickerSearch();
   });
 
   function submitForm() {
