@@ -260,6 +260,20 @@
   }
   .toolbar-divider { width: 0; border-left: 1px solid var(--bevel-dark); border-right: 1px solid var(--bevel-light); height: 22px; margin: 0 4px; }
 
+  /* Auto-refresh toggle (looks like a checkbox) */
+  .auto-toggle.auto-on {
+    background: var(--gain-bg);
+    color: var(--gain);
+    font-weight: bold;
+  }
+  .auto-toggle.auto-on::after {
+    content: ' · live';
+    font-family: var(--mono);
+    font-size: 14px;
+    margin-left: 2px;
+    animation: blink 1.6s steps(2) infinite;
+  }
+
   /* Market filter segmented control (in toolbar) */
   .filter-seg { display: inline-flex; gap: 0; }
   .filter-btn {
@@ -943,6 +957,8 @@
     valueHistoryLoading: {}, // key: range -> bool
     indices: {},             // key: symbol -> { price, prevClose, currency, points, fetchedAt, error? }
     indicesUpdating: false,
+    autoUpdate: false,       // when true, scheduleAutoTick runs refreshAll on a loop
+    updateProgress: null,    // { current, total } during a refresh sweep
   };
 
   // ---------- id helpers ----------
@@ -1175,30 +1191,6 @@
       currency: data.currency,
       points: data.points,
     };
-  }
-
-  // Refresh all indices in parallel. Individual failures are recorded per
-  // symbol so the strip can show "—" for the broken ones while the rest update.
-  async function updateIndices() {
-    state.indicesUpdating = true;
-    render();
-    try {
-      const results = await Promise.allSettled(INDICES.map(idx => fetchIndexQuote(idx.symbol)));
-      const now = Date.now();
-      INDICES.forEach((idx, i) => {
-        const r = results[i];
-        if (r.status === 'fulfilled') {
-          state.indices[idx.symbol] = { ...idx, ...r.value, fetchedAt: now };
-        } else {
-          const prev = state.indices[idx.symbol] || {};
-          state.indices[idx.symbol] = { ...idx, ...prev, error: (r.reason && r.reason.message) || 'failed', fetchedAt: prev.fetchedAt || null };
-        }
-      });
-      saveIndicesCache();
-    } finally {
-      state.indicesUpdating = false;
-      render();
-    }
   }
 
   function loadTheme() {
@@ -1789,6 +1781,143 @@
     }
   }
 
+  // ---------- per-item fetchers ----------
+  // Each function fetches one item (one holding, one index, FX) and mutates the
+  // matching state slice. They never save() or render() on their own — that's
+  // the responsibility of the caller (refreshAll).
+
+  async function fetchHoldingItem(holding) {
+    const tryFetch = async (sym) => {
+      const data = await fetchYahoo(sym);
+      state.holdings = state.holdings.map(h => h.id === holding.id
+        ? { ...h, currentPrice: data.price, currency: data.currency, lastPriceAt: new Date().toISOString() }
+        : h);
+    };
+    try {
+      await tryFetch(yahooSymbol(holding));
+      return { ok: true };
+    } catch (e) {
+      if (holding.market === 'KR') {
+        try { await tryFetch(holding.ticker + '.KQ'); return { ok: true }; }
+        catch (e2) { return { ok: false, error: e2.message }; }
+      }
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async function fetchIndexItem(idx) {
+    try {
+      const data = await fetchIndexQuote(idx.symbol);
+      state.indices[idx.symbol] = { ...idx, ...data, fetchedAt: Date.now() };
+      return { ok: true };
+    } catch (e) {
+      const prev = state.indices[idx.symbol] || {};
+      state.indices[idx.symbol] = { ...idx, ...prev, error: e.message, fetchedAt: prev.fetchedAt || null };
+      return { ok: false, error: e.message };
+    }
+  }
+
+  async function fetchFxItem() {
+    try {
+      const fx = await fetchFx();
+      if (fx) state.fxRate = fx;
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  function buildUpdateQueue() {
+    const items = [];
+    state.holdings.forEach(h => items.push({ kind: 'holding', label: h.ticker, run: () => fetchHoldingItem(h) }));
+    INDICES.forEach(idx => items.push({ kind: 'index', label: idx.label, run: () => fetchIndexItem(idx) }));
+    const needsFx = state.holdings.some(h => h.market === 'KR') && state.holdings.some(h => h.market === 'US');
+    if (needsFx) items.push({ kind: 'fx', label: 'FX', run: fetchFxItem });
+    return items;
+  }
+
+  // Batched refresh: process the queue in chunks of BATCH_SIZE with a delay
+  // between batches so we don't overwhelm the CORS proxies.
+  const BATCH_SIZE = 5;
+  const BATCH_DELAY_MS = 1800;
+  let _refreshing = false;
+
+  async function refreshAll() {
+    if (_refreshing) return;
+    if (state.holdings.length === 0 && Object.keys(state.indices).length === 0 && INDICES.length === 0) return;
+    _refreshing = true;
+    state.updating = true;
+    state.error = null;
+    const queue = buildUpdateQueue();
+    state.updateProgress = { current: 0, total: queue.length };
+    render();
+    try {
+      const failed = [];
+      for (let i = 0; i < queue.length; i += BATCH_SIZE) {
+        const batch = queue.slice(i, i + BATCH_SIZE);
+        const results = await Promise.allSettled(batch.map(item => item.run()));
+        results.forEach((r, j) => {
+          if (r.status === 'rejected' || (r.value && !r.value.ok)) {
+            failed.push(batch[j].label);
+          }
+        });
+        state.updateProgress = { current: Math.min(i + BATCH_SIZE, queue.length), total: queue.length };
+        render();
+        if (i + BATCH_SIZE < queue.length) {
+          await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
+        }
+      }
+      state.lastUpdated = new Date().toISOString();
+      if (failed.length > 0) {
+        const shown = failed.slice(0, 8).join(', ');
+        state.error = 'Failed: ' + shown + (failed.length > 8 ? ` (+${failed.length - 8} more)` : '') + '. Will retry on next auto cycle.';
+      }
+      save();
+      saveIndicesCache();
+    } catch (e) {
+      console.error('[refresh] failed:', e);
+      state.error = 'Refresh failed: ' + (e?.message || 'unknown error');
+    } finally {
+      _refreshing = false;
+      state.updating = false;
+      state.updateProgress = null;
+      render();
+    }
+  }
+
+  // ---------- auto-update loop (chained setTimeout, no overlap) ----------
+  const AUTO_KEY = 'portfolio.autoUpdate';
+  const AUTO_LOOP_DELAY_MS = 60000; // gap between full sweeps
+  let _autoTimer = null;
+
+  function loadAutoPref() {
+    try { return localStorage.getItem(AUTO_KEY) === 'on'; } catch (_) { return false; }
+  }
+  function saveAutoPref() {
+    try { localStorage.setItem(AUTO_KEY, state.autoUpdate ? 'on' : 'off'); } catch (_) {}
+  }
+
+  function scheduleAutoTick(delay) {
+    if (_autoTimer) { clearTimeout(_autoTimer); _autoTimer = null; }
+    if (!state.autoUpdate) return;
+    _autoTimer = setTimeout(async () => {
+      if (!state.autoUpdate) return;
+      await refreshAll();
+      if (state.autoUpdate) scheduleAutoTick(AUTO_LOOP_DELAY_MS);
+    }, delay);
+  }
+
+  function startAutoUpdate() {
+    state.autoUpdate = true;
+    saveAutoPref();
+    scheduleAutoTick(0);
+  }
+  function stopAutoUpdate() {
+    state.autoUpdate = false;
+    saveAutoPref();
+    if (_autoTimer) { clearTimeout(_autoTimer); _autoTimer = null; }
+  }
+
   async function fetchFx() {
     try {
       const r = await withTimeout(fetch('https://api.exchangerate-api.com/v4/latest/USD'), 8000);
@@ -1806,57 +1935,8 @@
     }
   }
 
-  async function updateHoldingPrices() {
-    if (state.holdings.length === 0) return;
-    const results = await Promise.allSettled(
-      state.holdings.map(async (h) => {
-        try {
-          return { id: h.id, ...(await fetchYahoo(yahooSymbol(h))) };
-        } catch (e) {
-          if (h.market === 'KR') {
-            try {
-              return { id: h.id, ...(await fetchYahoo(h.ticker + '.KQ')) };
-            } catch (e2) { throw e2; }
-          }
-          throw e;
-        }
-      })
-    );
-    const fx = await fetchFx();
-    const now = new Date().toISOString();
-    const failed = [];
-    state.holdings = state.holdings.map((h, i) => {
-      const r = results[i];
-      if (r.status === 'fulfilled' && typeof r.value.price === 'number') {
-        return { ...h, currentPrice: r.value.price, currency: r.value.currency, lastPriceAt: now };
-      }
-      failed.push(`${h.ticker} (${r.reason?.message || 'unknown error'})`);
-      return h;
-    });
-    if (fx) state.fxRate = fx;
-    state.lastUpdated = now;
-    if (failed.length) {
-      state.error = 'Update failed for: ' + failed.join(' · ') + '. Try again later or check console.';
-    }
-    save();
-  }
-
-  async function updatePrices() {
-    if (state.holdings.length === 0 && state.indicesUpdating) return;
-    state.updating = true; state.error = null; render();
-    try {
-      // Fetch holding prices and the markets strip in parallel.
-      const tasks = [updateIndices()];
-      if (state.holdings.length > 0) tasks.push(updateHoldingPrices());
-      await Promise.all(tasks);
-    } catch (e) {
-      console.error('[update] failed:', e);
-      state.error = 'Price update failed: ' + (e?.message || 'unknown error');
-    } finally {
-      state.updating = false;
-      render();
-    }
-  }
+  // updatePrices and friends were replaced by refreshAll above (with batching
+  // and auto-loop support). Manual refresh button calls refreshAll directly.
 
   // ---------- derived metrics ----------
   function derive() {
@@ -2099,8 +2179,14 @@
     return `<div class="toolbar">
       <button class="btn-primary" data-act="open-add">${I.plus} Add Holding</button>
       <button class="btn-ghost" data-act="open-prices" ${empty ? 'disabled' : ''}>${I.pencil} Edit Prices</button>
-      <button class="btn-ghost" data-act="update-prices" ${dis ? 'disabled' : ''}>
-        ${state.updating ? I.spinner : I.refresh}${state.updating ? 'Updating…' : 'Auto Update'}
+      <button class="btn-ghost" data-act="refresh" ${state.updating ? 'disabled' : ''}>
+        ${state.updating ? I.spinner : I.refresh}
+        ${state.updating && state.updateProgress
+          ? `Updating ${state.updateProgress.current}/${state.updateProgress.total}…`
+          : 'Refresh'}
+      </button>
+      <button class="btn-ghost auto-toggle ${state.autoUpdate ? 'auto-on' : ''}" data-act="toggle-auto" title="Auto-refresh in batches of ${BATCH_SIZE}, every ${Math.round(AUTO_LOOP_DELAY_MS/1000)}s">
+        ${state.autoUpdate ? '☑' : '☐'} Auto
       </button>
       <button class="btn-ghost" data-act="open-value-chart" ${empty ? 'disabled' : ''}>${I.trend} Value Chart</button>
       <span class="toolbar-divider"></span>
@@ -3012,7 +3098,11 @@
       }
     }
     else if (act === 'delete') { remove(id); }
-    else if (act === 'update-prices') { updatePrices(); }
+    else if (act === 'refresh') { refreshAll(); }
+    else if (act === 'toggle-auto') {
+      if (state.autoUpdate) stopAutoUpdate(); else startAutoUpdate();
+      render();
+    }
     else if (act === 'export-json') { exportJSON(); }
     else if (act === 'import-json') { document.getElementById('import-file').click(); }
     else if (act === 'toggle-theme') { toggleTheme(); }
@@ -3221,6 +3311,12 @@
   state.theme = loadTheme();
   applyTheme();
   loadIndicesCache();
+  state.autoUpdate = loadAutoPref();
+  // Kick off the auto loop after the first paint so it doesn't compete with
+  // initial layout, and so users can see the dashboard before the spinner kicks in.
+  if (state.autoUpdate) {
+    setTimeout(() => { if (state.autoUpdate) scheduleAutoTick(0); }, 1500);
+  }
   if (!hasLocalStorage()) {
     state.error = 'localStorage is unavailable (private mode?). Auto-save is disabled, but JSON backup/restore still works.';
     state.profiles = [newProfile('Default')];
