@@ -121,7 +121,7 @@
      Beveled chrome (Win95 outset/inset)
      ============================================================ */
   .bevel-out, .toolbar, .kpi, .chart-card, .holdings-section, .modal,
-  header.head, .btn-primary, .btn-ghost, .btn-soft, .icon-btn, .lot-add-btn,
+  header.head, .btn-primary, .btn-ghost, .btn-soft, .btn-accent, .icon-btn, .lot-add-btn,
   .seg-btn:not(.active) {
     border: 2px solid;
     border-color: var(--bevel-light) var(--bevel-darker) var(--bevel-darker) var(--bevel-light);
@@ -219,7 +219,7 @@
     margin-bottom: 14px;
     background: var(--surface);
   }
-  .btn-primary, .btn-ghost, .btn-soft {
+  .btn-primary, .btn-ghost, .btn-soft, .btn-accent {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -232,16 +232,24 @@
     min-height: 26px;
   }
   .btn-primary { font-weight: bold; }
-  .btn-primary:active, .btn-ghost:active, .btn-soft:active,
+  .btn-accent {
+    background: var(--accent);
+    color: #ffffff;
+    font-weight: bold;
+    text-shadow: 1px 1px 0 rgba(0,0,0,0.4);
+  }
+  .btn-icon-only { padding: 4px 8px; gap: 0; }
+  .btn-primary:active, .btn-ghost:active, .btn-soft:active, .btn-accent:active,
   .icon-btn:active, .lot-add-btn:active {
     border-color: var(--bevel-darker) var(--bevel-light) var(--bevel-light) var(--bevel-darker) !important;
     box-shadow: inset 1px 1px 0 var(--bevel-dark), inset -1px -1px 0 var(--bevel-light-2) !important;
   }
-  .btn-primary:focus, .btn-ghost:focus, .btn-soft:focus { outline: 1px dotted var(--text); outline-offset: -5px; }
-  .btn-ghost:disabled, .btn-primary:disabled, .btn-soft:disabled {
+  .btn-primary:focus, .btn-ghost:focus, .btn-soft:focus, .btn-accent:focus { outline: 1px dotted var(--text); outline-offset: -5px; }
+  .btn-ghost:disabled, .btn-primary:disabled, .btn-soft:disabled, .btn-accent:disabled {
     color: var(--dim-2);
     text-shadow: 1px 1px 0 var(--bevel-light);
     cursor: not-allowed;
+    opacity: 0.6;
   }
   [data-theme="light"]:root .btn-ghost:disabled,
   [data-theme="light"] .btn-primary:disabled,
@@ -2065,7 +2073,7 @@
 
   // ---------- auto-update loop (chained setTimeout, no overlap) ----------
   const AUTO_KEY = 'portfolio.autoUpdate';
-  const AUTO_LOOP_DELAY_MS = 60000; // gap between full sweeps
+  const AUTO_LOOP_DELAY_MS = 180000; // gap between full sweeps (3 minutes)
   let _autoTimer = null;
 
   function loadAutoPref() {
@@ -2356,7 +2364,6 @@
 
     return `<div class="toolbar">
       <button class="btn-primary" data-act="open-add">${I.plus} Add Holding</button>
-      <button class="btn-ghost" data-act="open-prices" ${empty ? 'disabled' : ''}>${I.pencil} Edit Prices</button>
       <button class="btn-ghost" data-act="refresh" ${state.updating ? 'disabled' : ''}>
         ${state.updating ? I.spinner : I.refresh}
         ${state.updating && state.updateProgress
@@ -2366,14 +2373,14 @@
       <button class="btn-ghost auto-toggle ${state.autoUpdate ? 'auto-on' : ''}" data-act="toggle-auto" title="Auto-refresh in batches of ${BATCH_SIZE}, every ${Math.round(AUTO_LOOP_DELAY_MS/1000)}s">
         ${state.autoUpdate ? '☑' : '☐'} Auto
       </button>
-      <button class="btn-ghost" data-act="open-value-chart" ${empty ? 'disabled' : ''}>${I.trend} Value Chart</button>
+      <button class="btn-accent" data-act="open-value-chart" ${empty ? 'disabled' : ''}>${I.trend} Value Chart</button>
       <span class="toolbar-divider"></span>
       ${filterBtns}
       <span class="toolbar-divider"></span>
-      <button class="btn-soft" data-act="export-json" title="Download all profiles as JSON">${I.download} Backup</button>
-      <button class="btn-soft" data-act="import-json" title="Restore from a JSON file">${I.upload} Restore</button>
-      <span class="toolbar-divider"></span>
       ${ccyBtn}
+      <span class="toolbar-divider"></span>
+      <button class="btn-soft btn-icon-only" data-act="export-json" title="Backup all profiles to JSON" aria-label="Backup">${I.download}</button>
+      <button class="btn-soft btn-icon-only" data-act="import-json" title="Restore from JSON file" aria-label="Restore">${I.upload}</button>
       ${themeBtn}
       <div class="save-status">${status}</div>
     </div>`;
