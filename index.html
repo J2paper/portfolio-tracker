@@ -290,6 +290,81 @@
   .filter-count { font-family: var(--mono); font-size: 14px; font-weight: 400; opacity: 0.7; }
 
   /* ============================================================
+     Markets strip (KOSPI / KOSDAQ / NASDAQ / S&P 500 / USDKRW)
+     ============================================================ */
+  .markets-strip {
+    background: var(--surface);
+    border: 2px solid;
+    border-color: var(--bevel-light) var(--bevel-darker) var(--bevel-darker) var(--bevel-light);
+    box-shadow: inset 1px 1px 0 var(--bevel-light-2), inset -1px -1px 0 var(--bevel-dark);
+    margin-bottom: 14px;
+    overflow: hidden;
+  }
+  .markets-titlebar {
+    background: linear-gradient(to right, var(--titlebar) 0%, var(--titlebar-2) 100%);
+    color: var(--titlebar-text);
+    padding: 3px 6px;
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .markets-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0;
+  }
+  .market-cell {
+    padding: 10px 14px;
+    border-right: 1px solid var(--bevel-dark);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto auto;
+    column-gap: 12px;
+    row-gap: 2px;
+    align-items: center;
+  }
+  .market-cell:last-child { border-right: none; }
+  .market-label {
+    grid-column: 1 / 2;
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: bold;
+    color: var(--muted);
+  }
+  .market-value {
+    grid-column: 1 / 2;
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+  .market-change {
+    grid-column: 1 / 2;
+    font-family: var(--mono);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .market-spark {
+    grid-column: 2 / 3;
+    grid-row: 1 / 4;
+    align-self: center;
+  }
+  @media (max-width: 1100px) {
+    .markets-grid { grid-template-columns: repeat(3, 1fr); }
+    .market-cell:nth-child(3n) { border-right: none; }
+    .market-cell:nth-child(-n+3) { border-bottom: 1px solid var(--bevel-dark); }
+  }
+  @media (max-width: 640px) {
+    .markets-grid { grid-template-columns: repeat(2, 1fr); }
+    .market-cell:nth-child(2n) { border-right: none; }
+    .market-cell:nth-child(3n) { border-right: 1px solid var(--bevel-dark); }
+    .market-spark svg { width: 60px; }
+  }
+
+  /* ============================================================
      KPI windows
      ============================================================ */
   .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
@@ -802,8 +877,18 @@
   const STORAGE_KEY = 'portfolio.v2';
   const STORAGE_KEY_V1 = 'portfolio.v1';
   const THEME_KEY = 'portfolio.theme';
+  const INDICES_KEY = 'portfolio.indices.v1';
   const KR_COLOR = '#e8b14d';
   const US_COLOR = '#5a8794';
+
+  // Major market indices shown in the top strip. Symbols are Yahoo-finance.
+  const INDICES = [
+    { symbol: '^KS11',    label: 'KOSPI',   currency: 'KRW' },
+    { symbol: '^KQ11',    label: 'KOSDAQ',  currency: 'KRW' },
+    { symbol: '^IXIC',    label: 'NASDAQ',  currency: 'USD' },
+    { symbol: '^GSPC',    label: 'S&P 500', currency: 'USD' },
+    { symbol: 'USDKRW=X', label: 'USD/KRW', currency: 'KRW' },
+  ];
 
   // ---------- formatters ----------
   const fmtKRW = (n) => '₩' + Math.round(n).toLocaleString('en-US');
@@ -856,6 +941,8 @@
     historyLoading: {},      // key: 'symbol_range' -> bool
     valueHistoryCache: {},   // key: range -> { points, currency, error?, fetchedAt }
     valueHistoryLoading: {}, // key: range -> bool
+    indices: {},             // key: symbol -> { price, prevClose, currency, points, fetchedAt, error? }
+    indicesUpdating: false,
   };
 
   // ---------- id helpers ----------
@@ -1058,6 +1145,58 @@
       console.error('Save failed:', e);
       state.saveStatus = 'error';
       state.error = 'Save failed: ' + e.message;
+      render();
+    }
+  }
+
+  function loadIndicesCache() {
+    try {
+      const raw = localStorage.getItem(INDICES_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (d && typeof d === 'object') state.indices = d;
+    } catch (_) {}
+  }
+  function saveIndicesCache() {
+    try { localStorage.setItem(INDICES_KEY, JSON.stringify(state.indices)); } catch (_) {}
+  }
+
+  // Fetch a single index quote (latest close + recent points for sparkline).
+  // Reuses fetchHistory which goes through the CORS proxy chain.
+  async function fetchIndexQuote(symbol) {
+    const data = await fetchHistory(symbol, '1mo', '1d');
+    if (!data.points || data.points.length === 0) throw new Error('No data');
+    const last = data.points[data.points.length - 1];
+    const prev = data.points.length >= 2 ? data.points[data.points.length - 2] : last;
+    return {
+      symbol,
+      price: last.y,
+      prevClose: prev.y,
+      currency: data.currency,
+      points: data.points,
+    };
+  }
+
+  // Refresh all indices in parallel. Individual failures are recorded per
+  // symbol so the strip can show "—" for the broken ones while the rest update.
+  async function updateIndices() {
+    state.indicesUpdating = true;
+    render();
+    try {
+      const results = await Promise.allSettled(INDICES.map(idx => fetchIndexQuote(idx.symbol)));
+      const now = Date.now();
+      INDICES.forEach((idx, i) => {
+        const r = results[i];
+        if (r.status === 'fulfilled') {
+          state.indices[idx.symbol] = { ...idx, ...r.value, fetchedAt: now };
+        } else {
+          const prev = state.indices[idx.symbol] || {};
+          state.indices[idx.symbol] = { ...idx, ...prev, error: (r.reason && r.reason.message) || 'failed', fetchedAt: prev.fetchedAt || null };
+        }
+      });
+      saveIndicesCache();
+    } finally {
+      state.indicesUpdating = false;
       render();
     }
   }
@@ -1667,41 +1806,49 @@
     }
   }
 
-  async function updatePrices() {
+  async function updateHoldingPrices() {
     if (state.holdings.length === 0) return;
+    const results = await Promise.allSettled(
+      state.holdings.map(async (h) => {
+        try {
+          return { id: h.id, ...(await fetchYahoo(yahooSymbol(h))) };
+        } catch (e) {
+          if (h.market === 'KR') {
+            try {
+              return { id: h.id, ...(await fetchYahoo(h.ticker + '.KQ')) };
+            } catch (e2) { throw e2; }
+          }
+          throw e;
+        }
+      })
+    );
+    const fx = await fetchFx();
+    const now = new Date().toISOString();
+    const failed = [];
+    state.holdings = state.holdings.map((h, i) => {
+      const r = results[i];
+      if (r.status === 'fulfilled' && typeof r.value.price === 'number') {
+        return { ...h, currentPrice: r.value.price, currency: r.value.currency, lastPriceAt: now };
+      }
+      failed.push(`${h.ticker} (${r.reason?.message || 'unknown error'})`);
+      return h;
+    });
+    if (fx) state.fxRate = fx;
+    state.lastUpdated = now;
+    if (failed.length) {
+      state.error = 'Update failed for: ' + failed.join(' · ') + '. Try again later or check console.';
+    }
+    save();
+  }
+
+  async function updatePrices() {
+    if (state.holdings.length === 0 && state.indicesUpdating) return;
     state.updating = true; state.error = null; render();
     try {
-      const results = await Promise.allSettled(
-        state.holdings.map(async (h) => {
-          try {
-            return { id: h.id, ...(await fetchYahoo(yahooSymbol(h))) };
-          } catch (e) {
-            if (h.market === 'KR') {
-              try {
-                return { id: h.id, ...(await fetchYahoo(h.ticker + '.KQ')) };
-              } catch (e2) { throw e2; }
-            }
-            throw e;
-          }
-        })
-      );
-      const fx = await fetchFx();
-      const now = new Date().toISOString();
-      const failed = [];
-      state.holdings = state.holdings.map((h, i) => {
-        const r = results[i];
-        if (r.status === 'fulfilled' && typeof r.value.price === 'number') {
-          return { ...h, currentPrice: r.value.price, currency: r.value.currency, lastPriceAt: now };
-        }
-        failed.push(`${h.ticker} (${r.reason?.message || 'unknown error'})`);
-        return h;
-      });
-      if (fx) state.fxRate = fx;
-      state.lastUpdated = now;
-      if (failed.length) {
-        state.error = 'Update failed for: ' + failed.join(' · ') + '. Try again later or check console.';
-      }
-      save();
+      // Fetch holding prices and the markets strip in parallel.
+      const tasks = [updateIndices()];
+      if (state.holdings.length > 0) tasks.push(updateHoldingPrices());
+      await Promise.all(tasks);
     } catch (e) {
       console.error('[update] failed:', e);
       state.error = 'Price update failed: ' + (e?.message || 'unknown error');
@@ -1819,7 +1966,71 @@
     return `<svg class="donut-svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">${paths}</svg>`;
   }
 
+  // ---------- sparklines (compact line for indices strip) ----------
+  function sparklineSVG(points, color) {
+    const w = 90, h = 28;
+    if (!points || points.length === 0) return '';
+    let yMin = Infinity, yMax = -Infinity;
+    for (const p of points) { if (p.y < yMin) yMin = p.y; if (p.y > yMax) yMax = p.y; }
+    const range = (yMax - yMin) || Math.abs(yMax) || 1;
+    const sx = i => (i / (points.length - 1 || 1)) * (w - 2) + 1;
+    const sy = y => h - 2 - ((y - yMin) / range) * (h - 4);
+    const d = points.map((p, i) => (i === 0 ? 'M' : 'L') + sx(i).toFixed(1) + ',' + sy(p.y).toFixed(1)).join(' ');
+    return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" style="display: block;"><path d="${d}" fill="none" stroke="${color}" stroke-width="1.5"/></svg>`;
+  }
+
   // ---------- templates ----------
+  function tplMarketsStrip() {
+    const cells = INDICES.map(idx => {
+      const data = state.indices[idx.symbol];
+      if (!data || data.error || data.price == null) {
+        return `<div class="market-cell">
+          <div class="market-label">${escape(idx.label)}</div>
+          <div class="market-value text-dim">—</div>
+          <div class="market-change text-dim">${data && data.error ? 'unavailable' : 'no data'}</div>
+          <div class="market-spark"></div>
+        </div>`;
+      }
+      const change = data.price - (data.prevClose || data.price);
+      const changePct = data.prevClose > 0 ? (change / data.prevClose) * 100 : 0;
+      const isGain = change >= 0;
+      const color = isGain ? 'var(--gain)' : 'var(--loss)';
+      const arrow = isGain ? '▲' : '▼';
+      const isFx = idx.symbol === 'USDKRW=X';
+      const fmtPrice = isFx
+        ? data.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        : data.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      // For sparkline color, base on overall trend (last vs first), not just last bar
+      const trendUp = data.points && data.points.length > 1
+        ? data.points[data.points.length - 1].y >= data.points[0].y
+        : isGain;
+      const sparkColor = trendUp ? 'var(--gain)' : 'var(--loss)';
+      return `<div class="market-cell">
+        <div class="market-label">${escape(idx.label)}</div>
+        <div class="market-value">${fmtPrice}</div>
+        <div class="market-change" style="color: ${color};">${arrow} ${isGain ? '+' : ''}${changePct.toFixed(2)}%</div>
+        <div class="market-spark">${sparklineSVG(data.points, sparkColor)}</div>
+      </div>`;
+    }).join('');
+
+    // Title bar status: show last fetch time if any
+    const fetchedAts = INDICES
+      .map(idx => state.indices[idx.symbol]?.fetchedAt)
+      .filter(t => typeof t === 'number');
+    const latest = fetchedAts.length > 0 ? Math.max(...fetchedAts) : null;
+    const status = state.indicesUpdating ? 'updating…'
+      : latest ? 'updated ' + new Date(latest).toLocaleString('en-US', { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : 'click Auto Update to load';
+
+    return `<section class="markets-strip">
+      <div class="markets-titlebar">
+        <span>▣ MARKETS</span>
+        <span style="margin-left: auto; opacity: 0.85; font-weight: normal; font-size: 14px; font-family: var(--mono);">${escape(status)}</span>
+      </div>
+      <div class="markets-grid">${cells}</div>
+    </section>`;
+  }
+
   function tplHeader() {
     const last = state.lastUpdated ? `Updated ${fmtDate(state.lastUpdated)}` : 'Never updated';
     const profileOptions = state.profiles.map(p =>
@@ -2657,6 +2868,7 @@
     const D = derive();
     root.innerHTML =
       tplHeader() +
+      tplMarketsStrip() +
       tplToolbar(D) +
       tplError() +
       tplKPI(D) +
@@ -3008,6 +3220,7 @@
   // ---------- init ----------
   state.theme = loadTheme();
   applyTheme();
+  loadIndicesCache();
   if (!hasLocalStorage()) {
     state.error = 'localStorage is unavailable (private mode?). Auto-save is disabled, but JSON backup/restore still works.';
     state.profiles = [newProfile('Default')];
