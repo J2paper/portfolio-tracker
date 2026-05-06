@@ -1243,7 +1243,21 @@
     state.activeProfileId = id;
     syncFromActive();
     state.error = null;
+    // Per-user computed caches must be invalidated; per-symbol caches
+    // (raw price history, raw index history) can be reused across users.
+    state.valueHistoryCache = {};
+    state.valueHistoryLoading = {};
+    state.parallelBenchmarkCache = {};
+    state.parallelBenchmarkLoading = {};
+    state.selectedHoldingId = null; // selected holding belonged to old user
     save();
+    // If the Value Chart modal happens to be open, kick off fresh computations
+    // for the new user so the chart updates without requiring a click.
+    if (state.dialog && state.dialog.mode === 'value-chart') {
+      const range = state.valueRange || '1y';
+      ensureValueHistory(range);
+      if (state.valueBenchmark) ensureParallelBenchmark(state.valueBenchmark, range);
+    }
   }
   function addProfile(name) {
     const trimmed = (name || '').trim();
