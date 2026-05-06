@@ -962,6 +962,8 @@
     valueBenchmark: null,    // null | symbol — overlay index in Value Chart modal
     benchmarkHistoryCache: {},   // key: 'symbol_range' -> { points, currency, error?, fetchedAt }
     benchmarkHistoryLoading: {}, // key: 'symbol_range' -> bool
+    parallelBenchmarkCache: {},   // key: 'symbol_range' -> simulated parallel portfolio in base ccy
+    parallelBenchmarkLoading: {},
   };
 
   // ---------- id helpers ----------
@@ -1717,6 +1719,129 @@
     const base = points[0].y;
     if (!base) return points.map(p => ({ x: p.x, y: 0 }));
     return points.map(p => ({ x: p.x, y: ((p.y / base) - 1) * 100 }));
+  }
+
+  // Simulate "what if every buy/sell had been the benchmark instead?"
+  // For each transaction we convert the cash flow into base currency, then
+  // increase or decrease our notional benchmark share count using that day's
+  // benchmark close (also in base currency). Result: a parallel portfolio
+  // whose absolute value can be plotted alongside the user's actual portfolio
+  // in the same units, so divergence reflects pick quality (not contributions).
+  async function ensureParallelBenchmark(symbol, range) {
+    const key = symbol + '_' + range;
+    if (state.parallelBenchmarkCache[key] && !state.parallelBenchmarkCache[key].error) return;
+    if (state.parallelBenchmarkLoading[key]) return;
+    state.parallelBenchmarkLoading[key] = true;
+    render();
+    try {
+      if (state.holdings.length === 0) throw new Error('No holdings to compare');
+      const D = derive();
+      const baseCcy = D.baseCcy;
+      const interval = intervalFor(range);
+      const benchInfo = INDICES.find(i => i.symbol === symbol);
+      const benchCcy = benchInfo ? benchInfo.currency : 'USD';
+
+      // Fetch benchmark history; FX history fetched only if we need to bridge
+      // currencies (either tx ccy != base, or bench ccy != base).
+      const benchData = await fetchHistory(symbol, range, interval);
+      if (!benchData.points || benchData.points.length === 0) throw new Error('No benchmark data');
+
+      const txCurrenciesNeedFx = state.holdings.some(h => (h.market === 'KR' ? 'KRW' : 'USD') !== baseCcy);
+      const benchNeedsFx = benchCcy !== baseCcy;
+      let fxData = null;
+      if (txCurrenciesNeedFx || benchNeedsFx) {
+        try { fxData = await fetchHistory('USDKRW=X', range, interval); }
+        catch (_) { throw new Error('USDKRW history unavailable'); }
+        if (!fxData || !fxData.points || fxData.points.length === 0) throw new Error('USDKRW history empty');
+      }
+
+      const priceAt = (pts, ts) => {
+        let lo = 0, hi = pts.length - 1, found = null;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (pts[mid].x <= ts) { found = pts[mid].y; lo = mid + 1; } else hi = mid - 1;
+        }
+        return found;
+      };
+      const fxAt = (ts) => fxData ? priceAt(fxData.points, ts) : null;
+      const toBase = (amount, ccy, ts) => {
+        if (ccy === baseCcy) return amount;
+        const fx = fxAt(ts);
+        if (fx == null) return null;
+        if (baseCcy === 'KRW' && ccy === 'USD') return amount * fx;
+        if (baseCcy === 'USD' && ccy === 'KRW') return amount / fx;
+        return amount;
+      };
+
+      // Flatten every lot across every holding into a chronological tx stream.
+      const allTxs = [];
+      for (const h of state.holdings) {
+        const ccy = h.market === 'KR' ? 'KRW' : 'USD';
+        for (const lot of (h.lots || [])) {
+          allTxs.push({
+            ts: new Date(lot.date).getTime(),
+            type: lot.type === 'sell' ? 'sell' : 'buy',
+            nativeAmount: Number(lot.shares) * Number(lot.price),
+            ccy,
+          });
+        }
+      }
+      allTxs.sort((a, b) => {
+        if (a.ts !== b.ts) return a.ts - b.ts;
+        return (a.type === 'sell' ? 1 : 0) - (b.type === 'sell' ? 1 : 0);
+      });
+
+      // Replay transactions, accumulating notional benchmark shares.
+      let benchShares = 0;
+      const sharesHistory = []; // [{ ts, shares }] step function
+      for (const tx of allTxs) {
+        const benchNative = priceAt(benchData.points, tx.ts);
+        if (benchNative == null) continue;
+        const benchInBase = toBase(benchNative, benchCcy, tx.ts);
+        if (benchInBase == null || benchInBase <= 0) continue;
+        const cashInBase = toBase(tx.nativeAmount, tx.ccy, tx.ts);
+        if (cashInBase == null) continue;
+        const delta = (tx.type === 'buy' ? +1 : -1) * (cashInBase / benchInBase);
+        benchShares += delta;
+        sharesHistory.push({ ts: tx.ts, shares: benchShares });
+      }
+      if (sharesHistory.length === 0) throw new Error('No transactions could be priced against the benchmark');
+
+      // Build a value timeline. Use union of bench close timestamps and tx
+      // event timestamps so jumps land exactly on transaction days.
+      const tsSet = new Set();
+      benchData.points.forEach(p => tsSet.add(p.x));
+      sharesHistory.forEach(s => tsSet.add(s.ts));
+      if (fxData) fxData.points.forEach(p => tsSet.add(p.x));
+      const timeline = [...tsSet].sort((a, b) => a - b);
+
+      const sharesAt = (ts) => {
+        let lo = 0, hi = sharesHistory.length - 1, found = 0;
+        while (lo <= hi) {
+          const mid = (lo + hi) >> 1;
+          if (sharesHistory[mid].ts <= ts) { found = sharesHistory[mid].shares; lo = mid + 1; } else hi = mid - 1;
+        }
+        return found;
+      };
+
+      const points = [];
+      for (const ts of timeline) {
+        const shares = sharesAt(ts);
+        if (shares <= 0 && points.length === 0) continue; // wait until first tx
+        const benchNative = priceAt(benchData.points, ts);
+        if (benchNative == null) continue;
+        const benchInBase = toBase(benchNative, benchCcy, ts);
+        if (benchInBase == null) continue;
+        points.push({ x: ts, y: shares * benchInBase });
+      }
+      if (points.length === 0) throw new Error('Could not build benchmark value timeline');
+      state.parallelBenchmarkCache[key] = { points, currency: baseCcy, fetchedAt: Date.now() };
+    } catch (e) {
+      state.parallelBenchmarkCache[key] = { points: [], error: e.message || String(e) };
+    } finally {
+      state.parallelBenchmarkLoading[key] = false;
+      render();
+    }
   }
 
   async function ensureBenchmarkHistory(symbol, range) {
@@ -2802,8 +2927,8 @@
       `<button class="filter-btn ${benchmark === v ? 'active' : ''}" data-act="set-benchmark" data-v="${v}">${escape(l)}</button>`
     ).join('');
     const benchKey = benchmark ? benchmark + '_' + range : null;
-    const benchCached = benchKey ? state.benchmarkHistoryCache[benchKey] : null;
-    const benchLoading = benchKey ? state.benchmarkHistoryLoading[benchKey] : false;
+    const benchCached = benchKey ? state.parallelBenchmarkCache[benchKey] : null;
+    const benchLoading = benchKey ? state.parallelBenchmarkLoading[benchKey] : false;
 
     let body;
     if (loading) {
@@ -2821,41 +2946,34 @@
       const pct = first.y > 0 ? (change / first.y) * 100 : 0;
       const portColor = change >= 0 ? 'var(--gain)' : 'var(--loss)';
 
-      // Build overlay if a benchmark is selected and loaded.
+      // Parallel-benchmark overlay: same cash flows applied to the index instead.
       let overlayLine = null;
       let benchStat = '';
       if (benchmark) {
         const benchLabel = INDICES.find(i => i.symbol === benchmark)?.label || benchmark;
         if (benchLoading) {
-          benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)}</span><span class="detail-stat-value text-dim">loading…</span></div>`;
+          benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)}</span><span class="detail-stat-value text-dim">computing…</span></div>`;
         } else if (benchCached && benchCached.error) {
           benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)}</span><span class="detail-stat-value text-loss">${escape(benchCached.error)}</span></div>`;
         } else if (benchCached && benchCached.points.length > 0) {
-          // Clip benchmark to portfolio's date range so both legs start on the same day.
-          const xMin = first.x, xMax = last.x;
-          const clipped = benchCached.points.filter(p => p.x >= xMin && p.x <= xMax);
+          // Clip benchmark to portfolio range; the y-axis is now shared (same currency).
+          const clipped = benchCached.points.filter(p => p.x >= first.x && p.x <= last.x);
           if (clipped.length > 0) {
-            const benchNorm = normalizePctPoints(clipped);
-            overlayLine = { points: benchNorm, color: 'var(--accent)', label: benchLabel };
-            const benchPct = clipped[0].y > 0 ? ((clipped[clipped.length - 1].y - clipped[0].y) / clipped[0].y) * 100 : 0;
-            const excess = pct - benchPct;
-            const benchColor = benchPct >= 0 ? 'var(--gain)' : 'var(--loss)';
-            const exColor = excess >= 0 ? 'var(--gain)' : 'var(--loss)';
-            benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)} return</span><span class="detail-stat-value" style="color: ${benchColor};">${benchPct >= 0 ? '+' : ''}${benchPct.toFixed(2)}%</span></div>
-              <div class="detail-stat"><span class="detail-stat-label">Excess (vs ${escape(benchLabel)})</span><span class="detail-stat-value" style="color: ${exColor};">${excess >= 0 ? '+' : ''}${excess.toFixed(2)}%p</span></div>`;
+            overlayLine = { points: clipped, color: 'var(--accent)', label: benchLabel };
+            const benchEnd = clipped[clipped.length - 1].y;
+            const diff = last.y - benchEnd;
+            const diffPct = benchEnd > 0 ? (diff / benchEnd) * 100 : 0;
+            const benchColor = diff >= 0 ? 'var(--gain)' : 'var(--loss)';
+            benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)} (parallel)</span><span class="detail-stat-value">${escape(fmt(benchEnd))}</span></div>
+              <div class="detail-stat"><span class="detail-stat-label">vs ${escape(benchLabel)}</span><span class="detail-stat-value" style="color: ${benchColor};">${diff >= 0 ? '+' : '−'}${fmt(Math.abs(diff))} · ${diff >= 0 ? '+' : ''}${diffPct.toFixed(2)}%</span></div>`;
           }
         }
       }
 
-      // Plot in % so portfolio (KRW/USD) and benchmark (index points) share an axis.
-      const portNorm = normalizePctPoints(cached.points);
-      const chart = lineChartSVG(portNorm, {
+      const chart = lineChartSVG(cached.points, {
         width: 900, height: 320,
-        formatY: v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%',
+        formatY: fmt,
         color: 'var(--info)',
-        refLine: 0,
-        refLabel: 'start (0%)',
-        refColor: 'currentColor',
         overlayLine,
       });
 
@@ -2863,11 +2981,11 @@
         <div class="detail-stats" style="margin-top: 14px;">
           <div class="detail-stat"><span class="detail-stat-label">Portfolio start</span><span class="detail-stat-value">${escape(fmt(first.y))}</span></div>
           <div class="detail-stat"><span class="detail-stat-label">Portfolio end</span><span class="detail-stat-value">${escape(fmt(last.y))}</span></div>
-          <div class="detail-stat"><span class="detail-stat-label">Portfolio return</span><span class="detail-stat-value" style="color: ${portColor};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span></div>
+          <div class="detail-stat"><span class="detail-stat-label">Portfolio change</span><span class="detail-stat-value" style="color: ${portColor};">${change >= 0 ? '+' : '−'}${fmt(Math.abs(change))} · ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span></div>
           ${benchStat}
         </div>
         <div class="text-dim" style="font-size: 14px; margin-top: 10px; font-family: var(--sans);">
-          Lines are normalized to "% change from start" so portfolio (${baseCcy}) and benchmark (index points) share one y-axis. Portfolio: solid · Benchmark: dashed.
+          Both lines are absolute ${baseCcy} values. The benchmark line simulates buying/selling the index with the same cash flows on the same dates as your transactions, so the gap between the lines reflects pick quality (not contributions). Portfolio: solid · ${benchmark ? 'Benchmark' : ''}: dashed.
         </div>`;
     }
 
@@ -3243,19 +3361,19 @@
       state.dialog = { mode: 'value-chart' };
       render();
       ensureValueHistory(state.valueRange || '1y');
-      if (state.valueBenchmark) ensureBenchmarkHistory(state.valueBenchmark, state.valueRange || '1y');
+      if (state.valueBenchmark) ensureParallelBenchmark(state.valueBenchmark, state.valueRange || '1y');
     }
     else if (act === 'set-value-range') {
       state.valueRange = btn.dataset.v;
       render();
       ensureValueHistory(state.valueRange);
-      if (state.valueBenchmark) ensureBenchmarkHistory(state.valueBenchmark, state.valueRange);
+      if (state.valueBenchmark) ensureParallelBenchmark(state.valueBenchmark, state.valueRange);
     }
     else if (act === 'set-benchmark') {
       const v = btn.dataset.v;
       state.valueBenchmark = v || null;
       render();
-      if (v) ensureBenchmarkHistory(v, state.valueRange || '1y');
+      if (v) ensureParallelBenchmark(v, state.valueRange || '1y');
     }
     else if (act === 'manage-profiles') { state.dialog = { mode: 'profiles' }; render(); }
     else if (act === 'quick-add-profile') {
