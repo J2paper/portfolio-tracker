@@ -959,6 +959,9 @@
     indicesUpdating: false,
     autoUpdate: false,       // when true, scheduleAutoTick runs refreshAll on a loop
     updateProgress: null,    // { current, total } during a refresh sweep
+    valueBenchmark: null,    // null | symbol — overlay index in Value Chart modal
+    benchmarkHistoryCache: {},   // key: 'symbol_range' -> { points, currency, error?, fetchedAt }
+    benchmarkHistoryLoading: {}, // key: 'symbol_range' -> bool
   };
 
   // ---------- id helpers ----------
@@ -1601,6 +1604,13 @@
       yMin = Math.min(yMin, opts.refLine);
       yMax = Math.max(yMax, opts.refLine);
     }
+    if (opts.overlayLine && opts.overlayLine.points && opts.overlayLine.points.length > 0) {
+      for (const p of opts.overlayLine.points) {
+        if (p.x < xMin || p.x > xMax) continue;
+        if (p.y < yMin) yMin = p.y;
+        if (p.y > yMax) yMax = p.y;
+      }
+    }
     const yRange = (yMax - yMin) || Math.abs(yMax) || 1;
     yMin -= yRange * 0.05;
     yMax += yRange * 0.05;
@@ -1672,15 +1682,58 @@
       return `<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${pT}" y2="${(h - pB).toFixed(1)}" stroke="${c}" stroke-opacity="0.45" stroke-dasharray="2 4"/>${shape}`;
     }).join('');
 
+    // Overlay (e.g. benchmark line) drawn dashed under the primary so the user
+    // can still see both at chart intersections.
+    let overlayEl = '';
+    if (opts.overlayLine && opts.overlayLine.points && opts.overlayLine.points.length > 0) {
+      const ov = opts.overlayLine.points.filter(p => p.x >= xMin && p.x <= xMax);
+      if (ov.length > 0) {
+        const ovD = ov.map((p, i) => (i === 0 ? 'M' : 'L') + sx(p.x).toFixed(1) + ',' + sy(p.y).toFixed(1)).join(' ');
+        const ovColor = opts.overlayLine.color || '#e8b14d';
+        overlayEl = `<path d="${ovD}" fill="none" stroke="${ovColor}" stroke-width="2" stroke-dasharray="6 3" stroke-opacity="0.85"/>`;
+        if (opts.overlayLine.label) {
+          const lastY = ov[ov.length - 1].y;
+          overlayEl += `<text x="${(w - pR - 4).toFixed(1)}" y="${(sy(lastY) + 16).toFixed(1)}" text-anchor="end" font-family="var(--mono)" font-size="14" font-weight="bold" fill="${ovColor}">${escape(opts.overlayLine.label)}</text>`;
+        }
+      }
+    }
+
     const lineColor = opts.color || '#5a8794';
     return `<svg viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg" style="width: 100%; height: auto; max-height: 360px; color: var(--text);">
       ${yEls.join('')}
       ${refEl}
       ${steppedEl}
+      ${overlayEl}
       ${markEls}
       <path d="${d}" fill="none" stroke="${lineColor}" stroke-width="2"/>
       ${xEls.join('')}
     </svg>`;
+  }
+
+  // Convert raw value points to "% change from start" so that two series with
+  // wildly different scales (KRW vs index points) can share a single y-axis.
+  function normalizePctPoints(points) {
+    if (!points || points.length === 0) return [];
+    const base = points[0].y;
+    if (!base) return points.map(p => ({ x: p.x, y: 0 }));
+    return points.map(p => ({ x: p.x, y: ((p.y / base) - 1) * 100 }));
+  }
+
+  async function ensureBenchmarkHistory(symbol, range) {
+    const key = symbol + '_' + range;
+    if (state.benchmarkHistoryCache[key] && !state.benchmarkHistoryCache[key].error) return;
+    if (state.benchmarkHistoryLoading[key]) return;
+    state.benchmarkHistoryLoading[key] = true;
+    render();
+    try {
+      const data = await fetchHistory(symbol, range, intervalFor(range));
+      state.benchmarkHistoryCache[key] = { ...data, fetchedAt: Date.now() };
+    } catch (e) {
+      state.benchmarkHistoryCache[key] = { points: [], error: e.message || String(e) };
+    } finally {
+      state.benchmarkHistoryLoading[key] = false;
+      render();
+    }
   }
 
   async function ensureHoldingHistory(holding, range) {
@@ -2743,6 +2796,14 @@
     const rangeBtns = ranges.map(([v,l]) =>
       `<button class="filter-btn ${range === v ? 'active' : ''}" data-act="set-value-range" data-v="${v}">${l}</button>`
     ).join('');
+    const benchmark = state.valueBenchmark || '';
+    const benchOptions = [['', 'NONE'], ['^KS11', 'KOSPI'], ['^KQ11', 'KOSDAQ'], ['^IXIC', 'NASDAQ'], ['^GSPC', 'S&P 500']];
+    const benchBtns = benchOptions.map(([v, l]) =>
+      `<button class="filter-btn ${benchmark === v ? 'active' : ''}" data-act="set-benchmark" data-v="${v}">${escape(l)}</button>`
+    ).join('');
+    const benchKey = benchmark ? benchmark + '_' + range : null;
+    const benchCached = benchKey ? state.benchmarkHistoryCache[benchKey] : null;
+    const benchLoading = benchKey ? state.benchmarkHistoryLoading[benchKey] : false;
 
     let body;
     if (loading) {
@@ -2758,32 +2819,70 @@
       const last = cached.points[cached.points.length - 1];
       const change = last.y - first.y;
       const pct = first.y > 0 ? (change / first.y) * 100 : 0;
-      const color = change >= 0 ? 'var(--gain)' : 'var(--loss)';
-      const chart = lineChartSVG(cached.points, {
+      const portColor = change >= 0 ? 'var(--gain)' : 'var(--loss)';
+
+      // Build overlay if a benchmark is selected and loaded.
+      let overlayLine = null;
+      let benchStat = '';
+      if (benchmark) {
+        const benchLabel = INDICES.find(i => i.symbol === benchmark)?.label || benchmark;
+        if (benchLoading) {
+          benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)}</span><span class="detail-stat-value text-dim">loading…</span></div>`;
+        } else if (benchCached && benchCached.error) {
+          benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)}</span><span class="detail-stat-value text-loss">${escape(benchCached.error)}</span></div>`;
+        } else if (benchCached && benchCached.points.length > 0) {
+          // Clip benchmark to portfolio's date range so both legs start on the same day.
+          const xMin = first.x, xMax = last.x;
+          const clipped = benchCached.points.filter(p => p.x >= xMin && p.x <= xMax);
+          if (clipped.length > 0) {
+            const benchNorm = normalizePctPoints(clipped);
+            overlayLine = { points: benchNorm, color: 'var(--accent)', label: benchLabel };
+            const benchPct = clipped[0].y > 0 ? ((clipped[clipped.length - 1].y - clipped[0].y) / clipped[0].y) * 100 : 0;
+            const excess = pct - benchPct;
+            const benchColor = benchPct >= 0 ? 'var(--gain)' : 'var(--loss)';
+            const exColor = excess >= 0 ? 'var(--gain)' : 'var(--loss)';
+            benchStat = `<div class="detail-stat"><span class="detail-stat-label">${escape(benchLabel)} return</span><span class="detail-stat-value" style="color: ${benchColor};">${benchPct >= 0 ? '+' : ''}${benchPct.toFixed(2)}%</span></div>
+              <div class="detail-stat"><span class="detail-stat-label">Excess (vs ${escape(benchLabel)})</span><span class="detail-stat-value" style="color: ${exColor};">${excess >= 0 ? '+' : ''}${excess.toFixed(2)}%p</span></div>`;
+          }
+        }
+      }
+
+      // Plot in % so portfolio (KRW/USD) and benchmark (index points) share an axis.
+      const portNorm = normalizePctPoints(cached.points);
+      const chart = lineChartSVG(portNorm, {
         width: 900, height: 320,
-        formatY: fmt,
+        formatY: v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%',
         color: 'var(--info)',
+        refLine: 0,
+        refLabel: 'start (0%)',
+        refColor: 'currentColor',
+        overlayLine,
       });
+
       body = `${chart}
         <div class="detail-stats" style="margin-top: 14px;">
-          <div class="detail-stat"><span class="detail-stat-label">Range start</span><span class="detail-stat-value">${escape(fmt(first.y))}</span></div>
-          <div class="detail-stat"><span class="detail-stat-label">Range end</span><span class="detail-stat-value">${escape(fmt(last.y))}</span></div>
-          <div class="detail-stat"><span class="detail-stat-label">Range change</span><span class="detail-stat-value" style="color: ${color};">${change >= 0 ? '+' : '−'}${fmt(Math.abs(change))} · ${fmtPct(pct)}</span></div>
+          <div class="detail-stat"><span class="detail-stat-label">Portfolio start</span><span class="detail-stat-value">${escape(fmt(first.y))}</span></div>
+          <div class="detail-stat"><span class="detail-stat-label">Portfolio end</span><span class="detail-stat-value">${escape(fmt(last.y))}</span></div>
+          <div class="detail-stat"><span class="detail-stat-label">Portfolio return</span><span class="detail-stat-value" style="color: ${portColor};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</span></div>
+          ${benchStat}
         </div>
         <div class="text-dim" style="font-size: 14px; margin-top: 10px; font-family: var(--sans);">
-          Each point sums (shares owned at that date × close price), converted to ${baseCcy} via historical USDKRW where needed.
+          Lines are normalized to "% change from start" so portfolio (${baseCcy}) and benchmark (index points) share one y-axis. Portfolio: solid · Benchmark: dashed.
         </div>`;
     }
 
     return `<div class="modal-bg" data-act="modal-bg">
       <div class="modal modal-wide" data-stop style="max-width: 1000px;">
         <div class="modal-head">
-          <h3 class="modal-title">Total Value Over Time (${baseCcy})</h3>
+          <h3 class="modal-title">Total Value vs Benchmark</h3>
           <button class="icon-btn" data-act="close-dialog">${I.close}</button>
         </div>
-        <p class="modal-sub">Historical portfolio value computed from each holding's daily close. Lots are accounted for from their purchase date forward.</p>
+        <p class="modal-sub">Historical portfolio value with optional benchmark overlay. Lots are counted from their purchase date forward.</p>
         <div style="padding: 0 14px 16px;">
-          <div class="filter-seg" style="margin-bottom: 14px;">${rangeBtns}</div>
+          <div style="font-family: var(--sans); font-size: 14px; font-weight: bold; color: var(--muted); margin-bottom: 4px;">RANGE</div>
+          <div class="filter-seg" style="margin-bottom: 10px;">${rangeBtns}</div>
+          <div style="font-family: var(--sans); font-size: 14px; font-weight: bold; color: var(--muted); margin-bottom: 4px;">COMPARE WITH</div>
+          <div class="filter-seg" style="margin-bottom: 14px;">${benchBtns}</div>
           ${body}
         </div>
       </div>
@@ -3144,11 +3243,19 @@
       state.dialog = { mode: 'value-chart' };
       render();
       ensureValueHistory(state.valueRange || '1y');
+      if (state.valueBenchmark) ensureBenchmarkHistory(state.valueBenchmark, state.valueRange || '1y');
     }
     else if (act === 'set-value-range') {
       state.valueRange = btn.dataset.v;
       render();
       ensureValueHistory(state.valueRange);
+      if (state.valueBenchmark) ensureBenchmarkHistory(state.valueBenchmark, state.valueRange);
+    }
+    else if (act === 'set-benchmark') {
+      const v = btn.dataset.v;
+      state.valueBenchmark = v || null;
+      render();
+      if (v) ensureBenchmarkHistory(v, state.valueRange || '1y');
     }
     else if (act === 'manage-profiles') { state.dialog = { mode: 'profiles' }; render(); }
     else if (act === 'quick-add-profile') {
