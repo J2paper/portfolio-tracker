@@ -258,13 +258,26 @@
   :root .btn-primary:disabled,
   :root .btn-soft:disabled { text-shadow: 1px 1px 0 #000; }
   .save-status {
-    margin-left: auto;
     color: var(--muted);
     font-size: 19px;
     font-family: var(--mono);
     display: flex;
     align-items: center;
     gap: 6px;
+    margin-left: 8px;
+  }
+  /* Right-aligned cluster (backup/restore/theme) — pushed to the far right by margin-left: auto */
+  .toolbar-right-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+  }
+  /* Theme toggle: flip surface and text so the button visually previews the
+     mode you'd be switching INTO. */
+  .theme-toggle-target {
+    background: var(--text) !important;
+    color: var(--bg) !important;
   }
   .toolbar-divider { width: 0; border-left: 1px solid var(--bevel-dark); border-right: 1px solid var(--bevel-light); height: 22px; margin: 0 4px; }
 
@@ -2340,9 +2353,11 @@
 
     const dis = state.holdings.length === 0 || state.updating;
     const empty = state.holdings.length === 0;
+    // Theme button shows the TARGET mode, with inverted colors so it visually
+    // looks like that mode — clicking it puts the rest of the UI into that look.
     const themeBtn = state.theme === 'dark'
-      ? `<button class="btn-soft" data-act="toggle-theme" title="Switch to light mode">${I.sun}</button>`
-      : `<button class="btn-soft" data-act="toggle-theme" title="Switch to dark mode">${I.moon}</button>`;
+      ? `<button class="btn-soft theme-toggle-target" data-act="toggle-theme" title="Switch to light mode">${I.sun} Light</button>`
+      : `<button class="btn-soft theme-toggle-target" data-act="toggle-theme" title="Switch to dark mode">${I.moon} Dark</button>`;
 
     const ccyPref = state.displayCurrency;
     const effective = D ? D.baseCcy : 'KRW';
@@ -2378,10 +2393,11 @@
       ${filterBtns}
       <span class="toolbar-divider"></span>
       ${ccyBtn}
-      <span class="toolbar-divider"></span>
-      <button class="btn-soft btn-icon-only" data-act="export-json" title="Backup all profiles to JSON" aria-label="Backup">${I.download}</button>
-      <button class="btn-soft btn-icon-only" data-act="import-json" title="Restore from JSON file" aria-label="Restore">${I.upload}</button>
-      ${themeBtn}
+      <div class="toolbar-right-group">
+        <button class="btn-soft btn-icon-only" data-act="export-json" title="Backup all profiles to JSON" aria-label="Backup">${I.download}</button>
+        <button class="btn-soft btn-icon-only" data-act="import-json" title="Restore from JSON file" aria-label="Restore">${I.upload}</button>
+        ${themeBtn}
+      </div>
       <div class="save-status">${status}</div>
     </div>`;
   }
