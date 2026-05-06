@@ -281,7 +281,7 @@
   }
   .toolbar-divider { width: 0; border-left: 1px solid var(--bevel-dark); border-right: 1px solid var(--bevel-light); height: 22px; margin: 0 4px; }
 
-  /* Auto-refresh toggle (looks like a checkbox) */
+  /* Auto-refresh toggle */
   .auto-toggle.auto-on {
     background: var(--gain-bg);
     color: var(--gain);
@@ -293,6 +293,11 @@
     font-size: 14px;
     margin-left: 2px;
     animation: blink 1.6s steps(2) infinite;
+  }
+  .auto-toggle.auto-paused {
+    background: var(--accent-bg);
+    color: var(--accent);
+    font-weight: bold;
   }
 
   /* Market filter segmented control (in toolbar) */
@@ -1468,8 +1473,15 @@
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const data = await r.json();
         const meta = data?.chart?.result?.[0]?.meta;
-        if (meta && typeof meta.regularMarketPrice === 'number') {
-          return { price: meta.regularMarketPrice, currency: meta.currency };
+        if (meta) {
+          // Prefer the freshest price: post-market > pre-market > regular session.
+          // Lets US extended-hours moves show up between regular sessions.
+          const price = (typeof meta.postMarketPrice === 'number' ? meta.postMarketPrice
+                       : typeof meta.preMarketPrice === 'number' ? meta.preMarketPrice
+                       : meta.regularMarketPrice);
+          if (typeof price === 'number') {
+            return { price, currency: meta.currency };
+          }
         }
         throw new Error('No price in response');
       } catch (e) {
@@ -1478,6 +1490,45 @@
     }
     throw lastErr || new Error('All proxies failed');
   }
+
+  // ---------- market hours ----------
+  // Extract hour/minute/weekday for a given IANA timezone — handles DST cleanly.
+  function zonedTime(timezone) {
+    try {
+      const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: timezone,
+        hour: 'numeric', minute: 'numeric', weekday: 'short', hour12: false,
+      });
+      const parts = fmt.formatToParts(new Date());
+      let hour = 0, min = 0, weekday = '';
+      for (const p of parts) {
+        if (p.type === 'hour') hour = parseInt(p.value, 10);
+        else if (p.type === 'minute') min = parseInt(p.value, 10);
+        else if (p.type === 'weekday') weekday = p.value;
+      }
+      if (hour === 24) hour = 0;
+      return { hour, min, weekday };
+    } catch (_) {
+      return { hour: 12, min: 0, weekday: 'Mon' };
+    }
+  }
+
+  // KR regular session: Mon-Fri 09:00-15:30 KST. KRX has no broadly-traded
+  // extended hours that the Yahoo chart endpoint covers.
+  function isKRMarketActive() {
+    const { hour, min, weekday } = zonedTime('Asia/Seoul');
+    if (weekday === 'Sat' || weekday === 'Sun') return false;
+    const t = hour * 60 + min;
+    return t >= 9 * 60 && t <= 15 * 60 + 30;
+  }
+  // US extended session: Mon-Fri 04:00-20:00 ET (pre + regular + post).
+  function isUSMarketActive() {
+    const { hour, min, weekday } = zonedTime('America/New_York');
+    if (weekday === 'Sat' || weekday === 'Sun') return false;
+    const t = hour * 60 + min;
+    return t >= 4 * 60 && t <= 20 * 60;
+  }
+  function anyMarketActive() { return isKRMarketActive() || isUSMarketActive(); }
 
   // ---------- ticker auto-search ----------
   // Yahoo Finance security search via the same CORS proxy chain.
@@ -2100,7 +2151,7 @@
 
   // ---------- auto-update loop (chained setTimeout, no overlap) ----------
   const AUTO_KEY = 'portfolio.autoUpdate';
-  const AUTO_LOOP_DELAY_MS = 180000; // gap between full sweeps (3 minutes)
+  const AUTO_LOOP_DELAY_MS = 300000; // gap between full sweeps (5 minutes)
   let _autoTimer = null;
 
   function loadAutoPref() {
@@ -2115,7 +2166,13 @@
     if (!state.autoUpdate) return;
     _autoTimer = setTimeout(async () => {
       if (!state.autoUpdate) return;
-      await refreshAll();
+      if (anyMarketActive()) {
+        await refreshAll();
+      } else {
+        // Skip the network round-trip when both KR and US sessions are closed.
+        // Re-render so the Auto button label can flip from "live" to "paused".
+        render();
+      }
       if (state.autoUpdate) scheduleAutoTick(AUTO_LOOP_DELAY_MS);
     }, delay);
   }
@@ -2399,8 +2456,12 @@
           ? `Updating ${state.updateProgress.current}/${state.updateProgress.total}…`
           : 'Refresh'}
       </button>
-      <button class="btn-ghost auto-toggle ${state.autoUpdate ? 'auto-on' : ''}" data-act="toggle-auto" title="Auto-refresh in batches of ${BATCH_SIZE}, every ${Math.round(AUTO_LOOP_DELAY_MS/1000)}s">
-        ${state.autoUpdate ? '☑' : '☐'} Auto
+      <button class="btn-ghost auto-toggle ${state.autoUpdate ? (anyMarketActive() ? 'auto-on' : 'auto-paused') : ''}" data-act="toggle-auto" title="${state.autoUpdate
+        ? (anyMarketActive()
+            ? 'Auto-refresh active. Sweeps every ' + Math.round(AUTO_LOOP_DELAY_MS/60000) + ' min while a market is open (KR 09:00–15:30 KST, US 04:00–20:00 ET incl. extended).'
+            : 'Markets closed — auto-refresh paused. Will resume at next session.')
+        : 'Auto-refresh during market hours (KR + US extended). Click to enable.'}">
+        ${state.autoUpdate ? (anyMarketActive() ? '☑ Auto' : '☑ Auto · paused') : '☐ Auto'}
       </button>
       <button class="btn-accent" data-act="open-value-chart" ${empty ? 'disabled' : ''}>${I.trend} Value Chart</button>
       <span class="toolbar-divider"></span>
