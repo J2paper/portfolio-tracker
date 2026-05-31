@@ -3269,13 +3269,13 @@
     const D = derive();
     root.innerHTML =
       tplHeader() +
-      tplMarketsStrip() +
       tplToolbar(D) +
       tplError() +
       tplKPI(D) +
       tplCharts(D) +
       tplHoldingDetail(D) +
       tplHoldingsTable(D) +
+      tplMarketsStrip() +
       tplDialog();
     if (topFields) {
       const set = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
