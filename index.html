@@ -829,6 +829,19 @@
     border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
   }
 
+  /* Inline action buttons (add-buy / edit / delete) right next to the ticker name */
+  .ticker-actions {
+    display: inline-flex;
+    gap: 1px;
+    margin-left: 6px;
+    flex-shrink: 0;
+    opacity: 0.55;
+    transition: opacity .15s;
+  }
+  .ticker-actions .icon-btn { padding: 2px 5px; }
+  table.holdings tbody tr:hover .ticker-actions,
+  table.holdings tbody tr.row-selected .ticker-actions { opacity: 1; }
+
   /* Clickable ticker name in holdings table */
   .ticker-link {
     background: transparent;
@@ -2925,6 +2938,11 @@
             <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
               <span class="ticker-display ticker-link" data-act="select-holding" data-id="${h.id}" title="View price history of ${escape(primary)}" tabindex="0" role="button">${escape(primary)}</span>
               <span class="market-tag ${h.market === 'KR' ? 'kr' : 'us'}">${h.market}</span>
+              <span class="ticker-actions">
+                <button class="icon-btn" data-act="add-buy" data-id="${h.id}" aria-label="Add buy" title="Add buy or sell">${I.plus}</button>
+                <button class="icon-btn" data-act="edit" data-id="${h.id}" aria-label="Edit" title="Edit holding">${I.pencil}</button>
+                <button class="icon-btn" data-act="delete" data-id="${h.id}" aria-label="Delete" title="Delete holding">${I.trash}</button>
+              </span>
             </div>
             ${showSub ? `<span class="ticker-sub" title="${escape(h.ticker)}">${escape(h.ticker)}</span>` : ''}
           </div>
@@ -2944,13 +2962,6 @@
           <div class="weight-cell">
             <div class="weight-track"><div class="weight-fill" style="width: ${weight.toFixed(1)}%;"></div></div>
             <span class="num" style="min-width: 40px;">${D.fxOk ? weight.toFixed(1) + '%' : '—'}</span>
-          </div>
-        </td>
-        <td>
-          <div style="display: flex; gap: 2px; justify-content: flex-end;">
-            <button class="icon-btn" data-act="add-buy" data-id="${h.id}" aria-label="Add buy" title="Add another buy">${I.plus}</button>
-            <button class="icon-btn" data-act="edit" data-id="${h.id}" aria-label="Edit">${I.pencil}</button>
-            <button class="icon-btn" data-act="delete" data-id="${h.id}" aria-label="Delete">${I.trash}</button>
           </div>
         </td>
       </tr>`;
@@ -2978,7 +2989,6 @@
               ${thSort('pnl', 'P/L', { right: true })}
               ${thSort('pct', 'Return', { right: true })}
               ${thSort('weight', 'Weight', { right: true })}
-              <th class="no-sort"></th>
             </tr>
           </thead>
           <tbody>${rows}</tbody>
