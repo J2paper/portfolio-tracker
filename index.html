@@ -829,11 +829,13 @@
     border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
   }
 
-  /* Inline action buttons (add-buy / edit / delete) right next to the ticker name */
+  /* Inline action buttons (add-buy / edit / delete) sit on the ticker-code row
+     where there's room. When no code subline exists, they fall back to the
+     first row next to the market tag. */
   .ticker-actions {
     display: inline-flex;
     gap: 1px;
-    margin-left: 6px;
+    margin-left: auto;
     flex-shrink: 0;
     opacity: 0.55;
     transition: opacity .15s;
@@ -2932,19 +2934,23 @@
         ? `<span class="lot-count-badge" title="${buyN} buy(s), ${sellN} sell(s)">${buyN}B/${sellN}S</span>`
         : (buyN > 1 ? `<span class="lot-count-badge" title="${buyN} buy lots">${buyN} buys</span>` : '');
       const isSelected = state.selectedHoldingId === h.id;
+      const actionsHTML = `<span class="ticker-actions">
+        <button class="icon-btn" data-act="add-buy" data-id="${h.id}" aria-label="Add buy" title="Add buy or sell">${I.plus}</button>
+        <button class="icon-btn" data-act="edit" data-id="${h.id}" aria-label="Edit" title="Edit holding">${I.pencil}</button>
+        <button class="icon-btn" data-act="delete" data-id="${h.id}" aria-label="Delete" title="Delete holding">${I.trash}</button>
+      </span>`;
       return `<tr class="${isSelected ? 'row-selected' : ''}">
         <td>
           <div class="ticker-cell">
             <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
               <span class="ticker-display ticker-link" data-act="select-holding" data-id="${h.id}" title="View price history of ${escape(primary)}" tabindex="0" role="button">${escape(primary)}</span>
               <span class="market-tag ${h.market === 'KR' ? 'kr' : 'us'}">${h.market}</span>
-              <span class="ticker-actions">
-                <button class="icon-btn" data-act="add-buy" data-id="${h.id}" aria-label="Add buy" title="Add buy or sell">${I.plus}</button>
-                <button class="icon-btn" data-act="edit" data-id="${h.id}" aria-label="Edit" title="Edit holding">${I.pencil}</button>
-                <button class="icon-btn" data-act="delete" data-id="${h.id}" aria-label="Delete" title="Delete holding">${I.trash}</button>
-              </span>
+              ${!showSub ? actionsHTML : ''}
             </div>
-            ${showSub ? `<span class="ticker-sub" title="${escape(h.ticker)}">${escape(h.ticker)}</span>` : ''}
+            ${showSub ? `<div style="display: flex; align-items: center; gap: 6px;">
+              <span class="ticker-sub" title="${escape(h.ticker)}">${escape(h.ticker)}</span>
+              ${actionsHTML}
+            </div>` : ''}
           </div>
         </td>
         <td>
